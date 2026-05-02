@@ -207,6 +207,113 @@ export interface ScanState {
 }
 
 // =============================================================================
+// WORKFLOW TYPES - Bulk Sweep Flow
+// =============================================================================
+
+export type BulkTranscriptSource = 'none' | 'live' | 'server' | 'manual' | 'mixed';
+export type BulkTranscriptStatus = 'pending' | 'transcribing' | 'done' | 'failed';
+export type BulkCandidateStatus = 'pending' | 'accepted' | 'rejected' | 'needs_review';
+
+export type BulkSweepStatus =
+	| 'idle'
+	| 'capturing'
+	| 'transcript_review'
+	| 'analyzing'
+	| 'reviewing'
+	| 'submitting'
+	| 'complete';
+
+export interface BulkCapturedPhoto {
+	id: string;
+	file: File;
+	previewUrl: string;
+	takenAtMs: number;
+	sessionOffsetMs: number;
+	note: string;
+	groupLabel: string;
+	ignored: boolean;
+}
+
+export interface BulkAudioSegment {
+	id: string;
+	file: Blob;
+	mimeType: string;
+	startedAtMs: number;
+	endedAtMs: number;
+	transcript?: string;
+	rawTranscript?: string;
+	transcriptStatus: BulkTranscriptStatus;
+}
+
+export interface BulkTranscriptSpan {
+	id: string;
+	text: string;
+	startMs?: number;
+	endMs?: number;
+	sourceAudioSegmentId?: string;
+}
+
+export interface BulkEvidenceRef {
+	photoId?: string;
+	photoIndex?: number;
+	transcriptSpanId?: string;
+	quote?: string;
+	reason?: string;
+}
+
+export interface BulkCandidateItem extends ItemCore, ItemExtended {
+	id: string;
+	custom_fields?: Record<string, string> | null;
+	confidence: number;
+	status: BulkCandidateStatus;
+	evidence: BulkEvidenceRef[];
+	sourcePhotoIds: string[];
+	uncertaintyReasons: string[];
+	duplicateCandidateIds: string[];
+	duplicateExistingItemId?: string | null;
+	suggestedAction: 'accept' | 'review' | 'reject' | 'merge';
+	originalFiles?: File[];
+	compressedDataUrls?: string[];
+}
+
+export interface BulkAnalysisStats {
+	photo_count: number;
+	ignored_photo_count: number;
+	candidate_count: number;
+	low_confidence_count: number;
+}
+
+export interface BulkDetectResponse {
+	candidates: BulkCandidateItem[];
+	warnings: string[];
+	stats: BulkAnalysisStats;
+}
+
+export interface BulkSweepState {
+	status: BulkSweepStatus;
+	locationId: string | null;
+	locationName: string | null;
+	locationPath: string | null;
+	parentItemId: string | null;
+	parentItemName: string | null;
+	startedAtMs: number | null;
+	photos: BulkCapturedPhoto[];
+	audioSegments: BulkAudioSegment[];
+	transcriptSpans: BulkTranscriptSpan[];
+	rawTranscriptText: string;
+	interimTranscriptText: string;
+	editedTranscriptText: string;
+	transcriptEdited: boolean;
+	transcriptSource: BulkTranscriptSource;
+	candidates: BulkCandidateItem[];
+	analysisProgress: Progress | null;
+	submissionProgress: Progress | null;
+	error: string | null;
+	warnings: string[];
+	stats: BulkAnalysisStats | null;
+}
+
+// =============================================================================
 // API TYPES - Requests
 // =============================================================================
 

@@ -124,6 +124,14 @@ class Settings(BaseSettings):
     capture_max_images: int = 30  # Max images per capture session
     capture_max_file_size_mb: int = 10  # Max file size per image in MB
 
+    # Bulk Sweep limits
+    bulk_enabled: bool = True
+    bulk_max_images: int = 120
+    bulk_vision_chunk_size: int = 8
+    bulk_max_transcript_chars: int = 20000
+    bulk_max_attachments_per_item: int = 4
+    bulk_low_confidence_threshold: float = 0.65
+
     # Rate limiting configuration (prevents hitting OpenAI API limits)
     # Default values are 80% of Tier 1 limits for safety margin
     rate_limit_enabled: bool = True  # Set to false to disable rate limiting

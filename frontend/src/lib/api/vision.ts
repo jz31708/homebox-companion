@@ -11,6 +11,9 @@ import type {
 	MergedItemResponse,
 	CorrectionResponse,
 	MergeItem,
+	BulkCapturedPhoto,
+	BulkDetectResponse,
+	BulkTranscriptSpan,
 } from '../types';
 
 export interface DetectOptions {
@@ -31,6 +34,21 @@ export interface MergeOptions {
 
 export interface CorrectOptions {
 	signal?: AbortSignal;
+}
+
+export interface BulkDetectOptions {
+	signal?: AbortSignal;
+}
+
+export interface BulkDetectInput {
+	photos: BulkCapturedPhoto[];
+	allPhotos: BulkCapturedPhoto[];
+	locationId: string | null;
+	locationName: string | null;
+	locationPath: string | null;
+	parentItemId: string | null;
+	editedTranscript: string;
+	transcriptSpans: BulkTranscriptSpan[];
 }
 
 /**
@@ -168,6 +186,51 @@ export const vision = {
 			errorMessage: 'Correction failed',
 			signal: options.signal,
 			headers,
+		});
+	},
+
+	bulkDetect: async (
+		input: BulkDetectInput,
+		options: BulkDetectOptions = {}
+	): Promise<BulkDetectResponse> => {
+		const formData = new FormData();
+		for (const photo of input.photos) {
+			formData.append('images', photo.file);
+		}
+		formData.append(
+			'session_meta',
+			JSON.stringify({
+				locationId: input.locationId,
+				locationName: input.locationName,
+				locationPath: input.locationPath,
+				parentItemId: input.parentItemId,
+				photos: input.allPhotos.map((photo, index) => ({
+					id: photo.id,
+					index,
+					takenAtMs: photo.takenAtMs,
+					sessionOffsetMs: photo.sessionOffsetMs,
+					note: photo.note,
+					groupLabel: photo.groupLabel,
+					ignored: photo.ignored,
+				})),
+			})
+		);
+		formData.append('edited_transcript', input.editedTranscript);
+		formData.append('transcript_spans', JSON.stringify(input.transcriptSpans));
+		formData.append(
+			'options',
+			JSON.stringify({
+				extractExtendedFields: true,
+				includeLowConfidence: true,
+			})
+		);
+
+		const headers = await buildVisionHeaders();
+		return requestFormData<BulkDetectResponse>('/tools/vision/bulk-detect', formData, {
+			errorMessage: 'Bulk analysis failed',
+			signal: options.signal,
+			headers,
+			timeout: 180_000,
 		});
 	},
 };

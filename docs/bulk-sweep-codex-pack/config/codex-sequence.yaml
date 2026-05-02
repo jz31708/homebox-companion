@@ -1,0 +1,46 @@
+project: homebox-companion-bulk-sweep
+repo: Duelion/homebox-companion
+strategy: web-fork-first
+phases:
+  - id: 00
+    file: codex-prompts/00-master-instructions.md
+    purpose: persistent context for every Codex session
+  - id: 01
+    file: codex-prompts/01-repo-map-and-safety.md
+    expected_diff: docs only
+  - id: 02
+    file: codex-prompts/02-add-bulk-types-and-state.md
+    expected_diff: frontend types/workflow scaffolding
+  - id: 03
+    file: codex-prompts/03-add-mode-choice-and-bulk-capture-route.md
+    expected_diff: UI route and mode entry
+  - id: 04
+    file: codex-prompts/04-audio-capture-and-transcript.md
+    expected_diff: narration state and UI
+  - id: 05
+    file: codex-prompts/05-backend-bulk-detect-endpoint.md
+    expected_diff: backend schemas and endpoint
+  - id: 06
+    file: codex-prompts/06-llm-fusion-and-dedupe.md
+    expected_diff: LLM pipeline
+  - id: 07
+    file: codex-prompts/07-wire-frontend-analysis.md
+    expected_diff: frontend API analysis wiring
+  - id: 08
+    file: codex-prompts/08-bulk-review-board.md
+    expected_diff: review board
+  - id: 09
+    file: codex-prompts/09-submission-and-attachments.md
+    expected_diff: submission integration
+  - id: 10
+    file: codex-prompts/10-ai-proxy-settings-and-deploy.md
+    expected_diff: env/docs/deploy
+  - id: 11
+    file: codex-prompts/11-tests-and-polish.md
+    expected_diff: tests and hardening
+hard_rules:
+  - keep classic capture working
+  - no auto-submit of AI guesses
+  - every candidate must have evidence refs
+  - no full transcript/image logging
+  - Docker deployment must remain possible
