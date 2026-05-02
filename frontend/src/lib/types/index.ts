@@ -313,6 +313,81 @@ export interface BulkSweepState {
 	stats: BulkAnalysisStats | null;
 }
 
+export type MedicinePhotoKind = 'front' | 'expiry' | 'doses' | 'notice' | 'other';
+export type MedicineIntakeStatus =
+	| 'idle'
+	| 'capturing'
+	| 'analyzing'
+	| 'reviewing'
+	| 'submitting'
+	| 'complete';
+
+export interface MedicineCapturedPhoto extends BulkCapturedPhoto {
+	kind: MedicinePhotoKind;
+}
+
+export interface MedicineDatabaseMatch {
+	source: 'bdpm' | 'api-medicaments-fr' | 'manual' | 'none';
+	query?: string | null;
+	cis?: string | null;
+	cip13?: string | null;
+	denomination?: string | null;
+	form?: string | null;
+	activeSubstances?: string[];
+	noticeUrl?: string | null;
+	rcpUrl?: string | null;
+	confidence: number;
+	raw?: unknown;
+}
+
+export interface MedicineCandidate extends ItemCore, ItemExtended {
+	id: string;
+	activeIngredient?: string | null;
+	strength?: string | null;
+	form?: string | null;
+	packageSize?: string | null;
+	expiryDate?: string | null;
+	openedDate?: string | null;
+	remainingDoses?: number | null;
+	remainingDoseLabel?: 'full' | 'half' | 'low' | 'empty' | 'unknown' | null;
+	storage?: string | null;
+	cip13?: string | null;
+	cis?: string | null;
+	noticeUrl?: string | null;
+	rcpUrl?: string | null;
+	confidence: number;
+	uncertaintyReasons: string[];
+	databaseMatch?: MedicineDatabaseMatch | null;
+	sourcePhotoIds: string[];
+	custom_fields?: Record<string, string> | null;
+	originalFiles?: File[];
+}
+
+export interface MedicineDetectResponse {
+	candidate: MedicineCandidate;
+	warnings: string[];
+}
+
+export interface MedicineIntakeState {
+	status: MedicineIntakeStatus;
+	locationId: string | null;
+	locationName: string | null;
+	locationPath: string | null;
+	startedAtMs: number | null;
+	photos: MedicineCapturedPhoto[];
+	note: string;
+	barcodeText: string;
+	expiryDate: string;
+	openedDate: string;
+	remainingDoses: number | null;
+	remainingDoseLabel: 'full' | 'half' | 'low' | 'empty' | 'unknown';
+	candidate: MedicineCandidate | null;
+	error: string | null;
+	warnings: string[];
+	analysisProgress: Progress | null;
+	submissionProgress: Progress | null;
+}
+
 // =============================================================================
 // API TYPES - Requests
 // =============================================================================

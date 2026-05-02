@@ -27,6 +27,12 @@ from homebox_companion.tools.vision.bulk_models import (
     BulkStats,
     BulkTranscriptSpan,
 )
+from homebox_companion.tools.vision.medicine_detector import detect_medicine
+from homebox_companion.tools.vision.medicine_models import (
+    MedicineDetectResponse,
+    MedicinePhotoMeta,
+    MedicineUserContext,
+)
 from homebox_companion.tools.vision.models import get_custom_fields_dict
 
 from ...dependencies import (
@@ -369,6 +375,50 @@ async def bulk_detect(
             low_confidence_count=low_confidence,
         ),
     )
+
+
+@router.post("/medicine-detect", response_model=MedicineDetectResponse)
+async def medicine_detect(
+    images: Annotated[list[UploadFile], File(description="Medicine photos")],
+    session_meta: Annotated[str, Form(description="JSON session metadata")],
+    user_context: Annotated[str, Form(description="JSON medicine hints")] = "{}",
+    ctx: Annotated[VisionContext, Depends(get_vision_context)] = None,  # type: ignore[assignment]
+    api_key: Annotated[str, Depends(require_llm_configured)] = "",  # noqa: ARG001
+) -> MedicineDetectResponse:
+    """Analyze several photos of one medicine into a reviewable Homebox item."""
+    if not images:
+        raise HTTPException(status_code=400, detail="At least one image is required")
+
+    try:
+        meta = json.loads(session_meta)
+        context_data = json.loads(user_context or "{}")
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail="Invalid medicine intake JSON metadata") from e
+
+    photo_meta_all = [MedicinePhotoMeta.model_validate(photo) for photo in meta.get("photos", [])]
+    active_meta = [photo for photo in photo_meta_all if not photo.ignored]
+    if len(images) != len(active_meta):
+        raise HTTPException(status_code=400, detail="Image count does not match non-ignored photo metadata")
+
+    context = MedicineUserContext.model_validate(context_data)
+    validated_images = await validate_files_size(images)
+    image_data = [
+        (photo, image_bytes, mime_type)
+        for photo, (image_bytes, mime_type) in zip(active_meta, validated_images, strict=True)
+    ]
+    logger.info(
+        "Medicine detection: photos={}, ignored={}, code_present={}",
+        len(active_meta),
+        len(photo_meta_all) - len(active_meta),
+        bool(context.barcodeText),
+    )
+
+    candidate = await detect_medicine(
+        image_data,
+        context=context,
+        output_language=ctx.output_language,
+    )
+    return MedicineDetectResponse(candidate=candidate, warnings=[])
 
 
 @router.post("/correct", response_model=CorrectionResponse)
