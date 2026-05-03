@@ -40,6 +40,7 @@ from ...dependencies import (
     VisionContext,
     get_client,
     get_vision_context,
+    require_auth,
     require_llm_configured,
     validate_file_size,
     validate_files_size,
@@ -425,7 +426,7 @@ async def medicine_detect(
 @router.post("/medicine-lookup", response_model=MedicineDetectResponse)
 async def medicine_lookup(
     request: MedicineLookupRequest,
-    ctx: Annotated[VisionContext, Depends(get_vision_context)] = None,  # type: ignore[assignment]
+    _auth: Annotated[None, Depends(require_auth)] = None,  # noqa: ARG001
 ) -> MedicineDetectResponse:
     """Resolve a scanned medicine barcode into a reviewable candidate without requiring photos."""
     context = MedicineUserContext(
@@ -438,7 +439,7 @@ async def medicine_lookup(
     )
     candidate = await lookup_medicine_barcode(
         context=context,
-        output_language=ctx.output_language,
+        output_language=None,
     )
     return MedicineDetectResponse(candidate=candidate, warnings=[])
 
