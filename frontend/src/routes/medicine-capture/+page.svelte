@@ -9,7 +9,7 @@
 	import BackLink from '$lib/components/BackLink.svelte';
 	import AnalysisProgressBar from '$lib/components/AnalysisProgressBar.svelte';
 	import type { MedicinePhotoKind } from '$lib/types';
-	import { Barcode, Camera, Hash, ImagePlus, Sparkles, Trash2, VideoOff } from 'lucide-svelte';
+	import { Barcode, Camera, ImagePlus, Pencil, Sparkles, Trash2, VideoOff } from 'lucide-svelte';
 
 	const workflow = medicineIntakeWorkflow;
 	let videoElement = $state<HTMLVideoElement>();
@@ -19,8 +19,9 @@
 	let cameraStarting = $state(false);
 	let scannerMode = $state(false);
 	let scannerStatus = $state('');
-	let barcodeDetector: any = null;
-	let scanTimer: number | null = null;
+	let barcodeReader: any = null;
+	let barcodeControls: { stop: () => void } | null = null;
+	let editingCode = $state(false);
 
 	const kindLabels: Record<MedicinePhotoKind, string> = {
 		front: 'Label',
@@ -37,7 +38,7 @@
 	});
 
 	onDestroy(() => {
-		stopBarcodeLoop();
+		stopBarcodeScan();
 		stopCamera();
 	});
 
@@ -118,58 +119,42 @@
 	}
 
 	async function startBarcodeScan() {
+		if (!videoElement || !stream) {
+			showToast('Camera is not ready yet', 'warning');
+			return;
+		}
 		scannerMode = true;
 		scannerStatus = 'Point the box barcode at the frame.';
-		if (!('BarcodeDetector' in window)) {
-			scannerStatus = 'Barcode scanner not supported here. Take a barcode photo instead.';
-			await capturePhoto('barcode');
-			return;
-		}
 		try {
-			const Detector = (window as any).BarcodeDetector;
-			barcodeDetector = new Detector({
-				formats: ['ean_13', 'ean_8', 'code_128', 'code_39', 'data_matrix', 'qr_code'],
-			});
-			runBarcodeLoop();
+			const { BrowserMultiFormatReader } = await import('@zxing/browser');
+			barcodeReader = new BrowserMultiFormatReader();
+			barcodeControls = await barcodeReader.decodeFromVideoElement(
+				videoElement,
+				(result: any, error: unknown) => {
+					if (result) {
+						const code = result.getText();
+						workflow.setBarcodeText(code);
+						scannerStatus = `Scanned ${code}`;
+						scannerMode = false;
+						editingCode = false;
+						stopBarcodeScan();
+						showToast('Barcode scanned', 'success');
+					} else if (error && `${error}`.includes('NotAllowed')) {
+						scannerStatus = 'Camera permission blocked.';
+					}
+				}
+			);
 		} catch (error) {
-			scannerStatus = 'Barcode scanner could not start. Take a barcode photo instead.';
-			console.warn(error);
-		}
-	}
-
-	function stopBarcodeLoop() {
-		if (scanTimer !== null) window.clearTimeout(scanTimer);
-		scanTimer = null;
-	}
-
-	async function runBarcodeLoop() {
-		if (!scannerMode || !barcodeDetector || !videoElement) return;
-		try {
-			const results = await barcodeDetector.detect(videoElement);
-			const code = results?.[0]?.rawValue;
-			if (code) {
-				workflow.setBarcodeText(code);
-				await capturePhoto('barcode');
-				scannerStatus = `Scanned ${code}`;
-				scannerMode = false;
-				stopBarcodeLoop();
-				showToast('Barcode scanned', 'success');
-				return;
-			}
-		} catch (error) {
-			console.warn(error);
-			scannerStatus = 'Scanning failed. Try a barcode photo.';
 			scannerMode = false;
-			stopBarcodeLoop();
-			return;
+			scannerStatus = 'Scanner could not start. Try again or type the code.';
+			console.warn(error);
 		}
-		scanTimer = window.setTimeout(runBarcodeLoop, 350);
 	}
 
-	async function barcodePhotoFallback() {
-		await capturePhoto('barcode');
-		scannerMode = false;
-		scannerStatus = 'Barcode photo saved for AI/OCR.';
+	function stopBarcodeScan() {
+		barcodeControls?.stop();
+		barcodeControls = null;
+		barcodeReader = null;
 	}
 
 	async function analyze() {
@@ -230,7 +215,7 @@
 						variant="secondary"
 						onclick={() => {
 							scannerMode = false;
-							stopBarcodeLoop();
+							stopBarcodeScan();
 						}}
 					>
 						<Barcode size={18} strokeWidth={1.5} />
@@ -246,15 +231,6 @@
 			{#if scannerMode || scannerStatus}
 				<div class="flex items-center justify-between gap-3 rounded-lg bg-neutral-900 px-3 py-2">
 					<p class="text-body-sm text-neutral-300">{scannerStatus}</p>
-					{#if scannerMode}
-						<button
-							type="button"
-							class="text-body-sm text-primary-300"
-							onclick={barcodePhotoFallback}
-						>
-							Use Photo
-						</button>
-					{/if}
 				</div>
 			{/if}
 		</div>
@@ -270,18 +246,34 @@
 		onchange={(event) => addFiles(event.currentTarget.files)}
 	/>
 
-	<section class="mb-4 rounded-xl border border-neutral-700 bg-neutral-900 p-4">
-		<div class="mb-3 flex items-center gap-2 text-neutral-100">
-			<Hash size={18} strokeWidth={1.5} />
-			<h3 class="font-semibold">Code</h3>
-		</div>
-		<input
-			class="input"
-			placeholder="Scanned barcode, CIP13, or text visible on the box"
-			value={workflow.state.barcodeText}
-			oninput={(event) => workflow.setBarcodeText(event.currentTarget.value)}
-		/>
-	</section>
+	{#if workflow.state.barcodeText || editingCode}
+		<section class="mb-4 rounded-xl border border-neutral-700 bg-neutral-900 p-4">
+			<div class="mb-3 flex items-center justify-between gap-3">
+				<div class="flex items-center gap-2 text-neutral-100">
+					<Barcode size={18} strokeWidth={1.5} />
+					<h3 class="font-semibold">Scanned Code</h3>
+				</div>
+				<button
+					type="button"
+					class="inline-flex items-center gap-1 text-body-sm text-primary-300"
+					onclick={() => (editingCode = !editingCode)}
+				>
+					<Pencil size={14} strokeWidth={1.5} />
+					<span>{editingCode ? 'Done' : 'Edit'}</span>
+				</button>
+			</div>
+			{#if editingCode}
+				<input
+					class="input"
+					placeholder="Correct barcode or CIP13"
+					value={workflow.state.barcodeText}
+					oninput={(event) => workflow.setBarcodeText(event.currentTarget.value)}
+				/>
+			{:else}
+				<p class="font-mono text-body text-neutral-200">{workflow.state.barcodeText}</p>
+			{/if}
+		</section>
+	{/if}
 
 	<section class="mb-4 grid gap-3 rounded-xl border border-neutral-700 bg-neutral-900 p-4">
 		<div class="grid grid-cols-2 gap-3">
