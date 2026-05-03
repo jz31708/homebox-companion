@@ -75,3 +75,12 @@ class MedicineCompletionResponse(BaseModel):
 class MedicineDetectResponse(BaseModel):
     candidate: MedicineCandidate
     warnings: list[str] = Field(default_factory=list)
+
+
+class MedicineLookupRequest(BaseModel):
+    barcodeText: str = Field(min_length=1, max_length=128)
+    note: str | None = None
+    expiryDate: str | None = None
+    openedDate: str | None = None
+    remainingDoses: int | None = Field(default=None, ge=0)
+    remainingDoseLabel: DoseLevel = "unknown"

@@ -118,6 +118,52 @@ def _apply_user_overrides(candidate: MedicineCandidate, context: MedicineUserCon
     return candidate
 
 
+async def lookup_medicine_barcode(
+    *,
+    context: MedicineUserContext,
+    output_language: str | None,
+) -> MedicineCandidate:
+    """Build a reviewable medicine candidate from a scanned code without requiring photos."""
+    code = (context.barcodeText or "").strip()
+    cip13 = _extract_cip13(code)
+    name = f"Medicine {cip13 or code}"
+    candidate = MedicineCandidate(
+        id=f"med_{_slug(cip13 or code)}",
+        name=name,
+        quantity=1,
+        description="Medicine identified from a scanned package code. Review the fields before saving.",
+        notes=context.note,
+        cip13=cip13,
+        confidence=0.58 if cip13 else 0.35,
+        sourcePhotoIds=[],
+        uncertaintyReasons=[
+            "Scanned code was used without label photos; verify the medicine name before saving.",
+        ],
+    )
+    candidate = _apply_user_overrides(candidate, context)
+    match = _build_public_reference(candidate, context)
+    candidate.databaseMatch = match
+    candidate.noticeUrl = match.noticeUrl
+    candidate.cip13 = candidate.cip13 or match.cip13
+    if not cip13:
+        candidate.uncertaintyReasons.append(
+            "The scanned code did not look like a French CIP13 medicine code."
+        )
+    if output_language and output_language.lower().startswith("fr"):
+        candidate.description = (
+            "Medicament identifie depuis un code scanne. Verifiez les champs avant l'enregistrement."
+        )
+        candidate.uncertaintyReasons = [
+            "Le code scanne a ete utilise sans photos de l'etiquette ; verifiez le nom avant l'enregistrement.",
+            *(
+                ["Le code scanne ne ressemble pas a un code medicament francais CIP13."]
+                if not cip13
+                else []
+            ),
+        ]
+    return candidate
+
+
 async def detect_medicine(
     image_data: list[tuple[MedicinePhotoMeta, bytes, str]],
     *,

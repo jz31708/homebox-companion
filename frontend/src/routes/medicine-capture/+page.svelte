@@ -22,6 +22,7 @@
 	let barcodeReader: any = null;
 	let barcodeControls: { stop: () => void } | null = null;
 	let editingCode = $state(false);
+	let lookupInFlight = $state(false);
 
 	const kindLabels: Record<MedicinePhotoKind, string> = {
 		front: 'Label',
@@ -133,12 +134,7 @@
 				(result: any, error: unknown) => {
 					if (result) {
 						const code = result.getText();
-						workflow.setBarcodeText(code);
-						scannerStatus = `Scanned ${code}`;
-						scannerMode = false;
-						editingCode = false;
-						stopBarcodeScan();
-						showToast('Barcode scanned', 'success');
+						void handleScannedCode(code);
 					} else if (error && `${error}`.includes('NotAllowed')) {
 						scannerStatus = 'Camera permission blocked.';
 					}
@@ -151,6 +147,25 @@
 		}
 	}
 
+	async function handleScannedCode(code: string) {
+		if (lookupInFlight) return;
+		lookupInFlight = true;
+		workflow.setBarcodeText(code);
+		scannerStatus = `Searching ${code}...`;
+		scannerMode = false;
+		editingCode = false;
+		stopBarcodeScan();
+		const result = await workflow.lookupBarcode();
+		lookupInFlight = false;
+		if (result) {
+			showToast('Barcode ready for review', 'success');
+			goto(resolve('/medicine-review'));
+		} else {
+			scannerStatus = workflow.state.error ?? 'Lookup failed. You can add photos or edit the code.';
+			showToast(scannerStatus, 'warning');
+		}
+	}
+
 	function stopBarcodeScan() {
 		barcodeControls?.stop();
 		barcodeControls = null;
@@ -159,6 +174,15 @@
 
 	async function analyze() {
 		const result = await workflow.analyze();
+		if (result) goto(resolve('/medicine-review'));
+		else if (workflow.state.error) showToast(workflow.state.error, 'error');
+	}
+
+	async function lookupTypedCode() {
+		lookupInFlight = true;
+		scannerStatus = 'Searching code...';
+		const result = await workflow.lookupBarcode();
+		lookupInFlight = false;
 		if (result) goto(resolve('/medicine-review'));
 		else if (workflow.state.error) showToast(workflow.state.error, 'error');
 	}
@@ -222,9 +246,9 @@
 						<span>Stop Scan</span>
 					</Button>
 				{:else}
-					<Button variant="secondary" onclick={startBarcodeScan}>
+					<Button variant="secondary" onclick={startBarcodeScan} disabled={lookupInFlight}>
 						<Barcode size={18} strokeWidth={1.5} />
-						<span>Scan Code</span>
+						<span>{lookupInFlight ? 'Searching' : 'Scan Code'}</span>
 					</Button>
 				{/if}
 			</div>
@@ -272,6 +296,10 @@
 			{:else}
 				<p class="font-mono text-body text-neutral-200">{workflow.state.barcodeText}</p>
 			{/if}
+			<Button variant="secondary" full onclick={lookupTypedCode} disabled={lookupInFlight}>
+				<Barcode size={18} strokeWidth={1.5} />
+				<span>{lookupInFlight ? 'Searching' : 'Lookup Code'}</span>
+			</Button>
 		</section>
 	{/if}
 
@@ -405,6 +433,6 @@
 <div class="fixed-bottom-panel p-4">
 	<Button variant="primary" full onclick={analyze}>
 		<Sparkles size={18} strokeWidth={1.5} />
-		<span>Analyze Medicine</span>
+		<span>Analyze Photos</span>
 	</Button>
 </div>

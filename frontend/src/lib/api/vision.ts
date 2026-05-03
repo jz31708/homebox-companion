@@ -71,6 +71,15 @@ export interface MedicineDetectInput {
 	remainingDoseLabel: 'full' | 'half' | 'low' | 'empty' | 'unknown';
 }
 
+export interface MedicineLookupInput {
+	barcodeText: string;
+	note: string;
+	expiryDate: string;
+	openedDate: string;
+	remainingDoses: number | null;
+	remainingDoseLabel: 'full' | 'half' | 'low' | 'empty' | 'unknown';
+}
+
 /**
  * Build headers for vision API requests.
  * In demo mode, includes field preferences for AI customization.
@@ -298,6 +307,20 @@ export const vision = {
 			signal: options.signal,
 			headers,
 			timeout: 180_000,
+		});
+	},
+
+	medicineLookup: async (
+		input: MedicineLookupInput,
+		options: MedicineDetectOptions = {}
+	): Promise<MedicineDetectResponse> => {
+		const headers = await buildVisionHeaders();
+		return request<MedicineDetectResponse>('/tools/vision/medicine-lookup', {
+			method: 'POST',
+			body: JSON.stringify(input),
+			signal: options.signal,
+			headers,
+			timeout: 60_000,
 		});
 	},
 };

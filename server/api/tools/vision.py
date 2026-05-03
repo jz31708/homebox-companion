@@ -27,9 +27,10 @@ from homebox_companion.tools.vision.bulk_models import (
     BulkStats,
     BulkTranscriptSpan,
 )
-from homebox_companion.tools.vision.medicine_detector import detect_medicine
+from homebox_companion.tools.vision.medicine_detector import detect_medicine, lookup_medicine_barcode
 from homebox_companion.tools.vision.medicine_models import (
     MedicineDetectResponse,
+    MedicineLookupRequest,
     MedicinePhotoMeta,
     MedicineUserContext,
 )
@@ -415,6 +416,27 @@ async def medicine_detect(
 
     candidate = await detect_medicine(
         image_data,
+        context=context,
+        output_language=ctx.output_language,
+    )
+    return MedicineDetectResponse(candidate=candidate, warnings=[])
+
+
+@router.post("/medicine-lookup", response_model=MedicineDetectResponse)
+async def medicine_lookup(
+    request: MedicineLookupRequest,
+    ctx: Annotated[VisionContext, Depends(get_vision_context)] = None,  # type: ignore[assignment]
+) -> MedicineDetectResponse:
+    """Resolve a scanned medicine barcode into a reviewable candidate without requiring photos."""
+    context = MedicineUserContext(
+        note=request.note,
+        barcodeText=request.barcodeText,
+        expiryDate=request.expiryDate,
+        openedDate=request.openedDate,
+        remainingDoses=request.remainingDoses,
+        remainingDoseLabel=request.remainingDoseLabel,
+    )
+    candidate = await lookup_medicine_barcode(
         context=context,
         output_language=ctx.output_language,
     )

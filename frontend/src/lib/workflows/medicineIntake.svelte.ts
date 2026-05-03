@@ -230,6 +230,48 @@ class MedicineIntakeWorkflow {
 		}
 	}
 
+	async lookupBarcode(): Promise<MedicineDetectResponse | null> {
+		const code = this._barcodeText.trim();
+		if (!code) {
+			this._error = 'Scan or enter a medicine code first.';
+			return null;
+		}
+		this.abortController = new AbortController();
+		this._status = 'analyzing';
+		this._analysisProgress = { current: 1, total: 2, message: 'Looking up scanned code...' };
+		this._error = null;
+		try {
+			const result = await vision.medicineLookup(
+				{
+					barcodeText: code,
+					note: this._note,
+					expiryDate: this._expiryDate,
+					openedDate: this._openedDate,
+					remainingDoses: this._remainingDoses,
+					remainingDoseLabel: this._remainingDoseLabel,
+				},
+				{ signal: this.abortController.signal }
+			);
+			this._analysisProgress = { current: 2, total: 2, message: 'Preparing medicine review...' };
+			this._candidate = this.attachLocalFiles(result.candidate);
+			this._warnings = result.warnings;
+			this._status = 'reviewing';
+			return result;
+		} catch (error) {
+			this._error =
+				error instanceof Error && error.name === 'AbortError'
+					? 'Lookup cancelled'
+					: error instanceof Error
+						? error.message
+						: 'Medicine lookup failed';
+			this._status = 'capturing';
+			return null;
+		} finally {
+			this.abortController = null;
+			this._analysisProgress = null;
+		}
+	}
+
 	private attachLocalFiles(candidate: MedicineCandidate): MedicineCandidate {
 		const files = candidate.sourcePhotoIds
 			.map((id) => this._photos.find((photo) => photo.id === id)?.file)

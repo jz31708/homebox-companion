@@ -1,4 +1,10 @@
-from homebox_companion.tools.vision.medicine_detector import _build_public_reference, _extract_cip13
+import asyncio
+
+from homebox_companion.tools.vision.medicine_detector import (
+    _build_public_reference,
+    _extract_cip13,
+    lookup_medicine_barcode,
+)
 from homebox_companion.tools.vision.medicine_models import MedicineCandidate, MedicineUserContext
 
 
@@ -20,3 +26,19 @@ def test_build_public_reference_uses_bdpm_search_without_requiring_exact_match()
     assert match.cip13 == "3400930000012"
     assert match.noticeUrl
     assert "base-donnees-publique.medicaments.gouv.fr" in match.noticeUrl
+
+
+def test_lookup_medicine_barcode_creates_review_candidate_without_photos() -> None:
+    candidate = asyncio.run(
+        lookup_medicine_barcode(
+            context=MedicineUserContext(barcodeText="CIP 3400930000012", remainingDoses=8),
+            output_language="en",
+        )
+    )
+
+    assert candidate.cip13 == "3400930000012"
+    assert candidate.remainingDoses == 8
+    assert candidate.sourcePhotoIds == []
+    assert candidate.noticeUrl
+    assert candidate.databaseMatch
+    assert candidate.databaseMatch.source == "bdpm"
