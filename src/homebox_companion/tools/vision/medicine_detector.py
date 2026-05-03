@@ -89,6 +89,8 @@ def _build_user_prompt(photos: list[MedicinePhotoMeta], context: MedicineUserCon
         "- activeIngredient, strength, form, packageSize when visible.\n"
         "- expiryDate should be YYYY-MM if only month/year is visible, or YYYY-MM-DD if exact date is clear.\n"
         "- remainingDoses and remainingDoseLabel should prioritize user input, then visible blister/bottle contents.\n"
+        "- If a photo kind is barcode, read any visible barcode, DataMatrix, QR, CIP, "
+        "or printed code and use it as an identification hint.\n"
         "- storage should only mention visible or user-provided storage constraints, such as refrigerator.\n"
         "- notes can include concise inventory notes and official-reference caveats.\n"
         "- sourcePhotoIds must cite the relevant photo IDs.\n\n"

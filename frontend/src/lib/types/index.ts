@@ -313,7 +313,7 @@ export interface BulkSweepState {
 	stats: BulkAnalysisStats | null;
 }
 
-export type MedicinePhotoKind = 'front' | 'expiry' | 'doses' | 'notice' | 'other';
+export type MedicinePhotoKind = 'front' | 'barcode' | 'expiry' | 'doses' | 'notice' | 'other';
 export type MedicineIntakeStatus =
 	| 'idle'
 	| 'capturing'

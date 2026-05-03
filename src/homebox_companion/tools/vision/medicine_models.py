@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from .models import DetectedItem
 
-MedicinePhotoKind = Literal["front", "expiry", "doses", "notice", "other"]
+MedicinePhotoKind = Literal["front", "barcode", "expiry", "doses", "notice", "other"]
 DoseLevel = Literal["full", "half", "low", "empty", "unknown"]
 
 
