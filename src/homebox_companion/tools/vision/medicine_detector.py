@@ -31,18 +31,50 @@ def _extract_cip13(text: str | None) -> str | None:
     return None
 
 
-def _build_public_reference(candidate: MedicineCandidate, context: MedicineUserContext) -> MedicineDatabaseMatch:
-    query = " ".join(
-        part
-        for part in [
-            candidate.name,
-            candidate.activeIngredient,
-            candidate.strength,
-            context.barcodeText,
-        ]
-        if part
-    ).strip()
+def _is_placeholder_name(name: str | None, cip13: str | None) -> bool:
+    if not name:
+        return True
+    cleaned = re.sub(r"\s+", " ", name.strip()).lower()
+    if not cleaned:
+        return True
+    if cleaned in {"medicine", "medicament", "medicament inconnu", "unknown medicine"}:
+        return True
+    if cip13 and cleaned in {f"medicine {cip13}", f"medicament {cip13}"}:
+        return True
+    return False
+
+
+def _build_reference_query(candidate: MedicineCandidate, context: MedicineUserContext) -> tuple[str, str | None]:
     cip13 = candidate.cip13 or _extract_cip13(context.barcodeText)
+    if cip13:
+        return cip13, cip13
+
+    parts: list[str] = []
+    if not _is_placeholder_name(candidate.name, None):
+        parts.append(candidate.name)
+    if candidate.activeIngredient:
+        parts.append(candidate.activeIngredient)
+    if candidate.strength:
+        parts.append(candidate.strength)
+    if context.barcodeText:
+        parts.append(context.barcodeText)
+
+    unique_parts: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        normalized = re.sub(r"\s+", " ", part.strip())
+        if not normalized:
+            continue
+        key = normalized.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_parts.append(normalized)
+    return " ".join(unique_parts).strip(), cip13
+
+
+def _build_public_reference(candidate: MedicineCandidate, context: MedicineUserContext) -> MedicineDatabaseMatch:
+    query, cip13 = _build_reference_query(candidate, context)
     confidence = 0.55 if cip13 else 0.35 if query else 0.0
     notice_url = (
         f"{BDPM_SEARCH_URL}&txtCaracteres={quote_plus(query or cip13 or '')}"
