@@ -5,6 +5,9 @@ from __future__ import annotations
 import re
 from urllib.parse import quote_plus
 
+import httpx
+from loguru import logger
+
 from ...ai.images import encode_image_bytes_to_data_uri
 from ...ai.llm import vision_completion
 from .medicine_models import (
@@ -16,6 +19,8 @@ from .medicine_models import (
 )
 
 BDPM_SEARCH_URL = "https://base-donnees-publique.medicaments.gouv.fr/index.php?choixRecherche=medicament"
+MEDICAMENTS_API_BASE_URL = "https://medicaments-api.giygas.dev/v1"
+MEDICAMENTS_API_TIMEOUT_S = 8.0
 
 
 def _slug(text: str) -> str:
@@ -91,6 +96,95 @@ def _build_public_reference(candidate: MedicineCandidate, context: MedicineUserC
         noticeUrl=notice_url,
         confidence=confidence,
     )
+
+
+def _build_bdpm_search_url(query: str | None, cip13: str | None) -> str:
+    term = (query or cip13 or "").strip()
+    if not term:
+        return BDPM_SEARCH_URL
+    return f"{BDPM_SEARCH_URL}&txtCaracteres={quote_plus(term)}"
+
+
+def _extract_active_substances(payload: dict) -> list[str]:
+    substances: list[str] = []
+    for entry in payload.get("composition", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        value = (entry.get("denominationSubstance") or "").strip()
+        if value:
+            substances.append(value)
+    unique: list[str] = []
+    seen: set[str] = set()
+    for item in substances:
+        key = item.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique
+
+
+async def _lookup_medicine_api_by_cip13(
+    cip13: str,
+) -> tuple[MedicineDatabaseMatch | None, dict[str, str | None]]:
+    endpoint = f"{MEDICAMENTS_API_BASE_URL}/medicaments"
+    try:
+        async with httpx.AsyncClient(timeout=MEDICAMENTS_API_TIMEOUT_S) as client:
+            response = await client.get(endpoint, params={"cip": cip13})
+    except (httpx.TimeoutException, httpx.NetworkError) as exc:
+        logger.debug("Medicine API lookup failed for CIP {}: {}", cip13, exc)
+        return None, {}
+
+    if response.status_code != 200:
+        logger.debug("Medicine API lookup returned {} for CIP {}", response.status_code, cip13)
+        return None, {}
+
+    try:
+        payload = response.json()
+    except ValueError:
+        logger.debug("Medicine API lookup returned invalid JSON for CIP {}", cip13)
+        return None, {}
+
+    data: dict | None = None
+    if isinstance(payload, dict):
+        if payload.get("code") == 404:
+            return None, {}
+        data = payload
+    elif isinstance(payload, list):
+        first = payload[0] if payload else None
+        if isinstance(first, dict):
+            data = first
+
+    if not data:
+        return None, {}
+
+    cis = str(data.get("cis")) if data.get("cis") is not None else None
+    denomination = (data.get("elementPharmaceutique") or "").strip() or None
+    form = (data.get("formePharmaceutique") or "").strip() or None
+    titulaire = (data.get("titulaire") or "").strip() or None
+    active_substances = _extract_active_substances(data)
+    notice_url = _build_bdpm_search_url(cis or denomination or cip13, cip13)
+
+    match = MedicineDatabaseMatch(
+        source="api-medicaments-fr",
+        query=cip13,
+        cis=cis,
+        cip13=cip13,
+        denomination=denomination,
+        form=form,
+        activeSubstances=active_substances,
+        noticeUrl=notice_url,
+        confidence=0.9,
+        raw=data,
+    )
+    enrichment = {
+        "name": denomination,
+        "manufacturer": titulaire,
+        "activeIngredient": active_substances[0] if active_substances else None,
+        "form": form,
+        "cis": cis,
+    }
+    return match, enrichment
 
 
 def _build_system_prompt(output_language: str | None) -> str:
@@ -173,10 +267,30 @@ async def lookup_medicine_barcode(
         ],
     )
     candidate = _apply_user_overrides(candidate, context)
-    match = _build_public_reference(candidate, context)
+    match: MedicineDatabaseMatch
+    if cip13:
+        api_match, enrichment = await _lookup_medicine_api_by_cip13(cip13)
+        if api_match:
+            match = api_match
+            if _is_placeholder_name(candidate.name, cip13) and enrichment.get("name"):
+                candidate.name = enrichment["name"] or candidate.name
+            if enrichment.get("manufacturer") and not candidate.manufacturer:
+                candidate.manufacturer = enrichment["manufacturer"]
+            if enrichment.get("activeIngredient") and not candidate.activeIngredient:
+                candidate.activeIngredient = enrichment["activeIngredient"]
+            if enrichment.get("form") and not candidate.form:
+                candidate.form = enrichment["form"]
+            if enrichment.get("cis") and not candidate.cis:
+                candidate.cis = enrichment["cis"]
+            candidate.confidence = max(candidate.confidence, api_match.confidence)
+        else:
+            match = _build_public_reference(candidate, context)
+    else:
+        match = _build_public_reference(candidate, context)
     candidate.databaseMatch = match
     candidate.noticeUrl = match.noticeUrl
     candidate.cip13 = candidate.cip13 or match.cip13
+    candidate.cis = candidate.cis or match.cis
     if not cip13:
         candidate.uncertaintyReasons.append(
             "The scanned code did not look like a French CIP13 medicine code."

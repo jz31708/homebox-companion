@@ -2,6 +2,7 @@ import asyncio
 
 from homebox_companion.tools.vision.medicine_detector import (
     _build_public_reference,
+    _build_reference_query,
     _extract_cip13,
     lookup_medicine_barcode,
 )
@@ -42,3 +43,16 @@ def test_lookup_medicine_barcode_creates_review_candidate_without_photos() -> No
     assert candidate.noticeUrl
     assert candidate.databaseMatch
     assert candidate.databaseMatch.source == "bdpm"
+
+
+def test_build_reference_query_prefers_single_cip13_without_placeholder_noise() -> None:
+    candidate = MedicineCandidate(
+        id="med",
+        name="Medicine 3400941999031",
+        quantity=1,
+        cip13="3400941999031",
+    )
+    query, cip13 = _build_reference_query(candidate, MedicineUserContext(barcodeText="3400941999031"))
+
+    assert cip13 == "3400941999031"
+    assert query == "3400941999031"
