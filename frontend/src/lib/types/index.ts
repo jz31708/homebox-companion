@@ -334,6 +334,8 @@ export interface MedicineDatabaseMatch {
 	denomination?: string | null;
 	form?: string | null;
 	activeSubstances?: string[];
+	generalUse?: string | null;
+	officialPageUrl?: string | null;
 	noticeUrl?: string | null;
 	rcpUrl?: string | null;
 	confidence: number;
@@ -353,6 +355,8 @@ export interface MedicineCandidate extends ItemCore, ItemExtended {
 	storage?: string | null;
 	cip13?: string | null;
 	cis?: string | null;
+	generalUse?: string | null;
+	officialPageUrl?: string | null;
 	noticeUrl?: string | null;
 	rcpUrl?: string | null;
 	confidence: number;

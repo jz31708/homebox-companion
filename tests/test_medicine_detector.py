@@ -1,9 +1,13 @@
 import asyncio
 
 from homebox_companion.tools.vision.medicine_detector import (
+    _build_bdpm_notice_url,
+    _build_bdpm_official_page_url,
+    _build_bdpm_rcp_url,
     _build_public_reference,
     _build_reference_query,
     _extract_cip13,
+    _extract_general_use_from_official_html,
     lookup_medicine_barcode,
 )
 from homebox_companion.tools.vision.medicine_models import MedicineCandidate, MedicineUserContext
@@ -56,3 +60,27 @@ def test_build_reference_query_prefers_single_cip13_without_placeholder_noise() 
 
     assert cip13 == "3400941999031"
     assert query == "3400941999031"
+
+
+def test_builds_official_bdpm_page_notice_and_rcp_urls_from_cis() -> None:
+    assert (
+        _build_bdpm_official_page_url("61223605")
+        == "https://base-donnees-publique.medicaments.gouv.fr/medicament/61223605/extrait"
+    )
+    assert _build_bdpm_notice_url("61223605", None, None).endswith("/61223605/extrait#tab-notice")
+    assert _build_bdpm_rcp_url("61223605").endswith("/61223605/extrait#tab-rcp")
+
+
+def test_extract_general_use_from_official_html_keeps_disclaimer_and_one_sentence() -> None:
+    html = """
+    <h5 id="heading-indications-therapeutiques">Indications therapeutiques</h5>
+    <p>DESLORATADINE BIOGARAN soulage les symptomes associes a la rhinite allergique.</p>
+    <p>DESLORATADINE BIOGARAN est aussi utilise pour soulager les symptomes associes a l'urticaire.</p>
+    <h5 id="heading-groupe-generique">Groupe generique</h5>
+    """
+
+    sentence = _extract_general_use_from_official_html(html)
+
+    assert sentence
+    assert sentence.startswith("Not medical advice; verify in the official notice:")
+    assert "rhinite allergique" in sentence

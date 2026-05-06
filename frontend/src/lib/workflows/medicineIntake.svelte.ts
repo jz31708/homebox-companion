@@ -33,8 +33,10 @@ function medicineCustomFields(candidate: MedicineCandidate): Record<string, stri
 		['Remaining doses', candidate.remainingDoses],
 		['Remaining level', candidate.remainingDoseLabel],
 		['Storage', candidate.storage],
+		['General use (verify notice)', candidate.generalUse],
 		['CIP13', candidate.cip13],
 		['CIS', candidate.cis],
+		['Official medicine page', candidate.officialPageUrl],
 		['Official notice', candidate.noticeUrl],
 		['Official RCP', candidate.rcpUrl],
 	];

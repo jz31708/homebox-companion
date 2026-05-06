@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from html import unescape
 from urllib.parse import quote_plus
 
 import httpx
@@ -21,6 +22,8 @@ from .medicine_models import (
 BDPM_SEARCH_URL = "https://base-donnees-publique.medicaments.gouv.fr/index.php?choixRecherche=medicament"
 MEDICAMENTS_API_BASE_URL = "https://medicaments-api.giygas.dev/v1"
 MEDICAMENTS_API_TIMEOUT_S = 8.0
+OFFICIAL_PAGE_TIMEOUT_S = 10.0
+GENERAL_USE_PREFIX = "Not medical advice; verify in the official notice: "
 
 
 def _slug(text: str) -> str:
@@ -105,6 +108,107 @@ def _build_bdpm_search_url(query: str | None, cip13: str | None) -> str:
     return f"{BDPM_SEARCH_URL}&txtCaracteres={quote_plus(term)}"
 
 
+def _build_bdpm_official_page_url(cis: str | None) -> str | None:
+    if not cis:
+        return None
+    return f"https://base-donnees-publique.medicaments.gouv.fr/medicament/{quote_plus(cis)}/extrait"
+
+
+def _build_bdpm_notice_url(cis: str | None, fallback_query: str | None, cip13: str | None) -> str:
+    official_page = _build_bdpm_official_page_url(cis)
+    if official_page:
+        return f"{official_page}#tab-notice"
+    return _build_bdpm_search_url(fallback_query, cip13)
+
+
+def _build_bdpm_rcp_url(cis: str | None) -> str | None:
+    official_page = _build_bdpm_official_page_url(cis)
+    if not official_page:
+        return None
+    return f"{official_page}#tab-rcp"
+
+
+def _html_to_text(fragment: str) -> str:
+    text = re.sub(r"(?is)<(script|style).*?</\1>", " ", fragment)
+    text = re.sub(r"(?i)<br\s*/?>", " ", text)
+    text = re.sub(r"(?i)</p\s*>", " ", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = unescape(text)
+    text = text.replace("\u2011", "-").replace("\xa0", " ")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _clean_general_use_sentence(text: str) -> str | None:
+    cleaned = _html_to_text(text)
+    if not cleaned:
+        return None
+    sentence_matches = re.findall(r"[^.!?]+[.!?]", cleaned)
+    candidates = sentence_matches or [cleaned]
+    preferred: list[str] = []
+    for pattern in (r"\bsoulage\b", r"\butilis[eé]\b", r"\bindiqu[eé]\b", r"\baide\b", r"\bcontre\b"):
+        preferred = [
+            sentence.strip()
+            for sentence in candidates
+            if re.search(pattern, sentence, re.IGNORECASE)
+        ]
+        if preferred:
+            break
+    sentence = (preferred[0] if preferred else candidates[0]).strip()
+    sentence = re.sub(r"^(Indications thérapeutiques\s*)+", "", sentence, flags=re.IGNORECASE).strip()
+    sentence = re.sub(r"\s*\([^)]{20,180}\)", "", sentence).strip()
+    if not sentence:
+        return None
+    if len(sentence) > 180:
+        sentence = sentence[:177].rsplit(" ", 1)[0].rstrip(" ,;:") + "..."
+    return f"{GENERAL_USE_PREFIX}{sentence}"
+
+
+def _extract_general_use_from_official_html(html: str) -> str | None:
+    match = re.search(
+        r'id=["\']heading-indications-therapeutiques["\'][\s\S]*?(?=<h5\b|id=["\']heading-groupe-generique["\'])',
+        html,
+        re.IGNORECASE,
+    )
+    if match:
+        return _clean_general_use_sentence(match.group(0))
+
+    fallback_match = re.search(
+        r"((?:[^<]|<[^/]|</(?!h5))*?(?:soulage|utilis[eé]|indiqu[eé]).{80,900})",
+        html,
+        re.IGNORECASE,
+    )
+    if fallback_match:
+        return _clean_general_use_sentence(fallback_match.group(1))
+    return None
+
+
+def _normalize_general_use(value: str | None) -> str | None:
+    if not value:
+        return None
+    cleaned = re.sub(r"\s+", " ", value).strip()
+    if not cleaned:
+        return None
+    if cleaned.casefold().startswith(GENERAL_USE_PREFIX.casefold()):
+        return cleaned
+    return f"{GENERAL_USE_PREFIX}{cleaned}"
+
+
+async def _lookup_official_general_use(cis: str | None) -> str | None:
+    official_page = _build_bdpm_official_page_url(cis)
+    if not official_page:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=OFFICIAL_PAGE_TIMEOUT_S, follow_redirects=True) as client:
+            response = await client.get(official_page)
+    except (httpx.TimeoutException, httpx.NetworkError) as exc:
+        logger.debug("Official medicine page lookup failed for CIS {}: {}", cis, exc)
+        return None
+    if response.status_code != 200:
+        logger.debug("Official medicine page returned {} for CIS {}", response.status_code, cis)
+        return None
+    return _extract_general_use_from_official_html(response.text)
+
+
 def _extract_active_substances(payload: dict) -> list[str]:
     substances: list[str] = []
     for entry in payload.get("composition", []) or []:
@@ -163,7 +267,10 @@ async def _lookup_medicine_api_by_cip13(
     form = (data.get("formePharmaceutique") or "").strip() or None
     titulaire = (data.get("titulaire") or "").strip() or None
     active_substances = _extract_active_substances(data)
-    notice_url = _build_bdpm_search_url(cis or denomination or cip13, cip13)
+    official_page_url = _build_bdpm_official_page_url(cis)
+    notice_url = _build_bdpm_notice_url(cis, cis or denomination, cip13)
+    rcp_url = _build_bdpm_rcp_url(cis)
+    general_use = await _lookup_official_general_use(cis)
 
     match = MedicineDatabaseMatch(
         source="api-medicaments-fr",
@@ -173,7 +280,10 @@ async def _lookup_medicine_api_by_cip13(
         denomination=denomination,
         form=form,
         activeSubstances=active_substances,
+        generalUse=general_use,
+        officialPageUrl=official_page_url,
         noticeUrl=notice_url,
+        rcpUrl=rcp_url,
         confidence=0.9,
         raw=data,
     )
@@ -183,6 +293,10 @@ async def _lookup_medicine_api_by_cip13(
         "activeIngredient": active_substances[0] if active_substances else None,
         "form": form,
         "cis": cis,
+        "generalUse": general_use,
+        "officialPageUrl": official_page_url,
+        "noticeUrl": notice_url,
+        "rcpUrl": rcp_url,
     }
     return match, enrichment
 
@@ -196,6 +310,8 @@ def _build_system_prompt(output_language: str | None) -> str:
         "Return strict JSON matching the requested schema. "
         "Use visible package text, expiry-side photos, dose/blister photos, optional code text, and user notes. "
         "Never invent dosage instructions, medical warnings, or an exact expiry if it is not visible or provided. "
+        "If you include generalUse, keep it to one short sentence, prefix it as non-medical-advice text, "
+        "and base it only on visible notice/package text or provided official data. "
         "If a value is uncertain, leave it null and add a short uncertainty reason."
     )
 
@@ -218,6 +334,8 @@ def _build_user_prompt(photos: list[MedicinePhotoMeta], context: MedicineUserCon
         "- If a photo kind is barcode, read any visible barcode, DataMatrix, QR, CIP, "
         "or printed code and use it as an identification hint.\n"
         "- storage should only mention visible or user-provided storage constraints, such as refrigerator.\n"
+        "- generalUse is optional: one short non-trusted sentence about what the medicine is generally for, "
+        "only when visible text or official context supports it.\n"
         "- notes can include concise inventory notes and official-reference caveats.\n"
         "- sourcePhotoIds must cite the relevant photo IDs.\n\n"
         f"User note: {context.note or ''}\n"
@@ -241,6 +359,35 @@ def _apply_user_overrides(candidate: MedicineCandidate, context: MedicineUserCon
         candidate.remainingDoseLabel = context.remainingDoseLabel
     if context.barcodeText and not candidate.cip13:
         candidate.cip13 = _extract_cip13(context.barcodeText)
+    candidate.generalUse = _normalize_general_use(candidate.generalUse)
+    return candidate
+
+
+def _apply_database_enrichment(
+    candidate: MedicineCandidate,
+    match: MedicineDatabaseMatch,
+    enrichment: dict[str, str | None],
+) -> MedicineCandidate:
+    cip13 = candidate.cip13 or match.cip13
+    if _is_placeholder_name(candidate.name, cip13) and enrichment.get("name"):
+        candidate.name = enrichment["name"] or candidate.name
+    if enrichment.get("manufacturer") and not candidate.manufacturer:
+        candidate.manufacturer = enrichment["manufacturer"]
+    if enrichment.get("activeIngredient") and not candidate.activeIngredient:
+        candidate.activeIngredient = enrichment["activeIngredient"]
+    if enrichment.get("form") and not candidate.form:
+        candidate.form = enrichment["form"]
+    if enrichment.get("cis") and not candidate.cis:
+        candidate.cis = enrichment["cis"]
+    if enrichment.get("generalUse") and not candidate.generalUse:
+        candidate.generalUse = enrichment["generalUse"]
+    if enrichment.get("officialPageUrl") and not candidate.officialPageUrl:
+        candidate.officialPageUrl = enrichment["officialPageUrl"]
+    if enrichment.get("noticeUrl") and not candidate.noticeUrl:
+        candidate.noticeUrl = enrichment["noticeUrl"]
+    if enrichment.get("rcpUrl") and not candidate.rcpUrl:
+        candidate.rcpUrl = enrichment["rcpUrl"]
+    candidate.confidence = max(candidate.confidence, match.confidence)
     return candidate
 
 
@@ -272,23 +419,16 @@ async def lookup_medicine_barcode(
         api_match, enrichment = await _lookup_medicine_api_by_cip13(cip13)
         if api_match:
             match = api_match
-            if _is_placeholder_name(candidate.name, cip13) and enrichment.get("name"):
-                candidate.name = enrichment["name"] or candidate.name
-            if enrichment.get("manufacturer") and not candidate.manufacturer:
-                candidate.manufacturer = enrichment["manufacturer"]
-            if enrichment.get("activeIngredient") and not candidate.activeIngredient:
-                candidate.activeIngredient = enrichment["activeIngredient"]
-            if enrichment.get("form") and not candidate.form:
-                candidate.form = enrichment["form"]
-            if enrichment.get("cis") and not candidate.cis:
-                candidate.cis = enrichment["cis"]
-            candidate.confidence = max(candidate.confidence, api_match.confidence)
+            candidate = _apply_database_enrichment(candidate, api_match, enrichment)
         else:
             match = _build_public_reference(candidate, context)
     else:
         match = _build_public_reference(candidate, context)
     candidate.databaseMatch = match
-    candidate.noticeUrl = match.noticeUrl
+    candidate.generalUse = candidate.generalUse or match.generalUse
+    candidate.officialPageUrl = candidate.officialPageUrl or match.officialPageUrl
+    candidate.noticeUrl = candidate.noticeUrl or match.noticeUrl
+    candidate.rcpUrl = candidate.rcpUrl or match.rcpUrl
     candidate.cip13 = candidate.cip13 or match.cip13
     candidate.cis = candidate.cis or match.cis
     if not cip13:
@@ -332,10 +472,23 @@ async def detect_medicine(
     candidate = _apply_user_overrides(candidate, context)
     if not candidate.sourcePhotoIds:
         candidate.sourcePhotoIds = [photo.id for photo in photos]
-    match = _build_public_reference(candidate, context)
+    cip13 = candidate.cip13 or _extract_cip13(context.barcodeText)
+    if cip13:
+        api_match, enrichment = await _lookup_medicine_api_by_cip13(cip13)
+        if api_match:
+            match = api_match
+            candidate = _apply_database_enrichment(candidate, api_match, enrichment)
+        else:
+            match = _build_public_reference(candidate, context)
+    else:
+        match = _build_public_reference(candidate, context)
     candidate.databaseMatch = match
+    candidate.generalUse = candidate.generalUse or match.generalUse
+    candidate.officialPageUrl = candidate.officialPageUrl or match.officialPageUrl
     candidate.noticeUrl = candidate.noticeUrl or match.noticeUrl
+    candidate.rcpUrl = candidate.rcpUrl or match.rcpUrl
     candidate.cip13 = candidate.cip13 or match.cip13
+    candidate.cis = candidate.cis or match.cis
     if match.confidence < 0.6:
         uncertainty = "Public medicine match is a best-effort search; verify notice manually."
         candidate.uncertaintyReasons = sorted(

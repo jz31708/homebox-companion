@@ -169,6 +169,14 @@
 						oninput={(event) => patch({ storage: event.currentTarget.value })}
 					/>
 				</label>
+				<label class="grid gap-1 text-body-sm text-neutral-300">
+					<span>General use</span>
+					<textarea
+						class="input-sm min-h-20"
+						value={candidate.generalUse ?? ''}
+						oninput={(event) => patch({ generalUse: event.currentTarget.value })}
+					></textarea>
+				</label>
 				<textarea
 					class="input-sm min-h-24"
 					value={candidate.notes ?? ''}
@@ -201,6 +209,12 @@
 				/>
 				<input
 					class="input-sm"
+					placeholder="Official medicine page URL"
+					value={candidate.officialPageUrl ?? ''}
+					oninput={(event) => patch({ officialPageUrl: event.currentTarget.value })}
+				/>
+				<input
+					class="input-sm"
 					placeholder="Official notice URL"
 					value={candidate.noticeUrl ?? ''}
 					oninput={(event) => patch({ noticeUrl: event.currentTarget.value })}
@@ -212,11 +226,16 @@
 					oninput={(event) => patch({ rcpUrl: event.currentTarget.value })}
 				/>
 			</div>
-			{#if candidate.noticeUrl}
+			{#if candidate.noticeUrl || candidate.officialPageUrl}
 				<button
 					type="button"
 					class="mt-3 inline-flex items-center gap-2 text-body-sm text-primary-300"
-					onclick={() => window.open(candidate.noticeUrl ?? '', '_blank', 'noopener,noreferrer')}
+					onclick={() =>
+						window.open(
+							candidate.noticeUrl ?? candidate.officialPageUrl ?? '',
+							'_blank',
+							'noopener,noreferrer'
+						)}
 				>
 					<ExternalLink size={16} strokeWidth={1.5} />
 					<span>Open reference</span>

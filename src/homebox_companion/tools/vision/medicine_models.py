@@ -40,6 +40,8 @@ class MedicineDatabaseMatch(BaseModel):
     denomination: str | None = None
     form: str | None = None
     activeSubstances: list[str] = Field(default_factory=list)
+    generalUse: str | None = None
+    officialPageUrl: str | None = None
     noticeUrl: str | None = None
     rcpUrl: str | None = None
     confidence: float = Field(default=0, ge=0, le=1)
@@ -59,6 +61,8 @@ class MedicineCandidate(DetectedItem):
     storage: str | None = None
     cip13: str | None = None
     cis: str | None = None
+    generalUse: str | None = None
+    officialPageUrl: str | None = None
     noticeUrl: str | None = None
     rcpUrl: str | None = None
     confidence: float = Field(default=0.75, ge=0, le=1)
