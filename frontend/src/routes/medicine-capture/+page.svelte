@@ -252,6 +252,17 @@
 					</Button>
 				{/if}
 			</div>
+			<Button
+				variant="secondary"
+				full
+				onclick={() => {
+					editingCode = true;
+					scannerStatus = '';
+				}}
+			>
+				<Pencil size={18} strokeWidth={1.5} />
+				<span>Type Code</span>
+			</Button>
 			{#if scannerMode || scannerStatus}
 				<div class="flex items-center justify-between gap-3 rounded-lg bg-neutral-900 px-3 py-2">
 					<p class="text-body-sm text-neutral-300">{scannerStatus}</p>
