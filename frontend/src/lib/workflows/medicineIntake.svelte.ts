@@ -323,7 +323,8 @@ class MedicineIntakeWorkflow {
 			}
 			this._submissionProgress = { current: 1, total: 1, message: 'Medicine submitted.' };
 			this._status = 'complete';
-			goto(resolve('/success'));
+			this.startNextAtSameLocation();
+			goto(resolve('/medicine-capture'));
 			return true;
 		} catch (error) {
 			log.error('Medicine submission failed', error);
@@ -346,6 +347,30 @@ class MedicineIntakeWorkflow {
 		this._locationName = null;
 		this._locationPath = null;
 		this._startedAtMs = null;
+		this._photos = [];
+		this._note = '';
+		this._barcodeText = '';
+		this._expiryDate = '';
+		this._openedDate = '';
+		this._remainingDoses = null;
+		this._remainingDoseLabel = 'unknown';
+		this._candidate = null;
+		this._analysisProgress = null;
+		this._submissionProgress = null;
+		this._error = null;
+		this._warnings = [];
+	}
+
+	private startNextAtSameLocation(): void {
+		const locationId = this._locationId;
+		const locationName = this._locationName;
+		const locationPath = this._locationPath;
+		for (const photo of this._photos) safeRevoke(photo.previewUrl);
+		this._status = 'capturing';
+		this._locationId = locationId;
+		this._locationName = locationName;
+		this._locationPath = locationPath;
+		this._startedAtMs = Date.now();
 		this._photos = [];
 		this._note = '';
 		this._barcodeText = '';
