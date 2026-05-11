@@ -63,31 +63,11 @@
 				return;
 			}
 
-			// Get list of available cameras to help with selection
-			const cameras = await QrScanner.listCameras(true);
-			log.info(
-				'Available cameras:',
-				cameras.map((c) => ({ id: c.id, label: c.label }))
-			);
-
-			// Determine which camera to use:
-			// - Prefer 'environment' (back camera) for QR scanning
-			// - Fall back to first available camera if no environment camera found
-			let preferredCamera: string | undefined = 'environment';
-
-			// Check if we have an environment/back camera
-			const hasEnvironmentCamera = cameras.some(
-				(c) =>
-					c.label.toLowerCase().includes('back') ||
-					c.label.toLowerCase().includes('rear') ||
-					c.label.toLowerCase().includes('environment')
-			);
-
-			if (!hasEnvironmentCamera && cameras.length > 0) {
-				// No labeled back camera - use the first available camera by ID
-				preferredCamera = cameras[0].id;
-				log.info(`No environment camera found, using camera: ${cameras[0].label || cameras[0].id}`);
-			}
+			// Do not request camera labels before starting the scanner. On mobile,
+			// listCameras(true) opens a temporary stream and can leave the real
+			// scanner racing a still-busy camera device.
+			const cameras = await QrScanner.listCameras(false);
+			log.info('Available camera count:', cameras.length);
 
 			qrScanner = new QrScanner(
 				videoElement,
@@ -101,7 +81,7 @@
 					});
 				},
 				{
-					preferredCamera,
+					preferredCamera: 'environment',
 					highlightScanRegion: true,
 					highlightCodeOutline: true,
 					returnDetailedScanResult: true,

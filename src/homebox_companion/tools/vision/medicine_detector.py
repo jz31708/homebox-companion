@@ -193,6 +193,12 @@ def _normalize_general_use(value: str | None) -> str | None:
     return f"{GENERAL_USE_PREFIX}{cleaned}"
 
 
+def _use_general_use_as_description(candidate: MedicineCandidate) -> MedicineCandidate:
+    if candidate.generalUse:
+        candidate.description = candidate.generalUse
+    return candidate
+
+
 async def _lookup_official_general_use(cis: str | None) -> str | None:
     official_page = _build_bdpm_official_page_url(cis)
     if not official_page:
@@ -426,6 +432,7 @@ async def lookup_medicine_barcode(
         match = _build_public_reference(candidate, context)
     candidate.databaseMatch = match
     candidate.generalUse = candidate.generalUse or match.generalUse
+    candidate = _use_general_use_as_description(candidate)
     candidate.officialPageUrl = candidate.officialPageUrl or match.officialPageUrl
     candidate.noticeUrl = candidate.noticeUrl or match.noticeUrl
     candidate.rcpUrl = candidate.rcpUrl or match.rcpUrl
@@ -484,6 +491,7 @@ async def detect_medicine(
         match = _build_public_reference(candidate, context)
     candidate.databaseMatch = match
     candidate.generalUse = candidate.generalUse or match.generalUse
+    candidate = _use_general_use_as_description(candidate)
     candidate.officialPageUrl = candidate.officialPageUrl or match.officialPageUrl
     candidate.noticeUrl = candidate.noticeUrl or match.noticeUrl
     candidate.rcpUrl = candidate.rcpUrl or match.rcpUrl

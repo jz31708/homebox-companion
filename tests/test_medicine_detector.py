@@ -8,6 +8,7 @@ from homebox_companion.tools.vision.medicine_detector import (
     _build_reference_query,
     _extract_cip13,
     _extract_general_use_from_official_html,
+    _use_general_use_as_description,
     lookup_medicine_barcode,
 )
 from homebox_companion.tools.vision.medicine_models import MedicineCandidate, MedicineUserContext
@@ -47,6 +48,21 @@ def test_lookup_medicine_barcode_creates_review_candidate_without_photos() -> No
     assert candidate.noticeUrl
     assert candidate.databaseMatch
     assert candidate.databaseMatch.source == "bdpm"
+
+
+def test_medicine_description_uses_general_use_when_available() -> None:
+    candidate = MedicineCandidate(
+        id="med",
+        name="Desloratadine",
+        quantity=1,
+        description="Medicine identified from a scanned package code. Review the fields before saving.",
+        generalUse="Not medical advice; verify in the official notice: Used for allergy symptoms.",
+    )
+
+    updated = _use_general_use_as_description(candidate)
+
+    assert updated.description == updated.generalUse
+    assert "identified from a scanned package code" not in (updated.description or "")
 
 
 def test_build_reference_query_prefers_single_cip13_without_placeholder_noise() -> None:

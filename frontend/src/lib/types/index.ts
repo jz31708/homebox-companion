@@ -322,6 +322,18 @@ export type MedicineIntakeStatus =
 	| 'submitting'
 	| 'complete';
 
+export type MedicineMissionKind = 'medicine_intake' | 'room_sweep' | 'single_item' | 'pack_travel' | 'find_homebox';
+
+export type MedicineCandidateState =
+	| 'captured'
+	| 'analyzing'
+	| 'needs_review'
+	| 'blocked'
+	| 'ready'
+	| 'submitted'
+	| 'failed'
+	| 'recovered';
+
 export interface MedicineCapturedPhoto extends BulkCapturedPhoto {
 	kind: MedicinePhotoKind;
 }
@@ -372,6 +384,29 @@ export interface MedicineDetectResponse {
 	warnings: string[];
 }
 
+export interface MedicineQueuedScan {
+	id: string;
+	missionId: string;
+	missionKind: MedicineMissionKind;
+	code: string;
+	status: MedicineCandidateState;
+	createdAtMs: number;
+	updatedAtMs: number;
+	selectedLocationId: string | null;
+	selectedLocationPath: string | null;
+	evidencePhotoIds: string[];
+	userNote: string;
+	aiSummary?: string | null;
+	correctionHistory: Array<{ atMs: number; fields: string[] }>;
+	confidence: number | null;
+	blockerReasons: string[];
+	duplicateSuspicions: string[];
+	homeboxPayloadPreview?: BatchCreateRequest | null;
+	candidate?: MedicineCandidate | null;
+	error?: string | null;
+	warnings?: string[];
+}
+
 export interface MedicineIntakeState {
 	status: MedicineIntakeStatus;
 	locationId: string | null;
@@ -386,6 +421,8 @@ export interface MedicineIntakeState {
 	remainingDoses: number | null;
 	remainingDoseLabel: 'full' | 'half' | 'low' | 'empty' | 'unknown';
 	candidate: MedicineCandidate | null;
+	queuedScans: MedicineQueuedScan[];
+	activeQueueId: string | null;
 	error: string | null;
 	warnings: string[];
 	analysisProgress: Progress | null;

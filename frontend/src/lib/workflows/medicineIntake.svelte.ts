@@ -7,9 +7,11 @@ import type {
 	MedicineCandidate,
 	MedicineCapturedPhoto,
 	MedicineDetectResponse,
+	MedicineCandidateState,
 	MedicineIntakeState,
 	MedicineIntakeStatus,
 	MedicinePhotoKind,
+	MedicineQueuedScan,
 	Progress,
 } from '$lib/types';
 
@@ -46,6 +48,53 @@ function medicineCustomFields(candidate: MedicineCandidate): Record<string, stri
 	return fields;
 }
 
+function buildMedicinePayload(
+	candidate: MedicineCandidate,
+	locationId: string | null
+): BatchCreateRequest {
+	return {
+		location_id: locationId,
+		items: [
+			{
+				name: candidate.name,
+				quantity: candidate.quantity || 1,
+				description: candidate.description,
+				tag_ids: candidate.tag_ids,
+				manufacturer: candidate.manufacturer,
+				model_number: candidate.model_number,
+				serial_number: candidate.serial_number,
+				purchase_price: candidate.purchase_price,
+				purchase_from: candidate.purchase_from,
+				notes: candidate.notes,
+				custom_fields: medicineCustomFields(candidate),
+			},
+		],
+	};
+}
+
+function candidateBlockers(candidate: MedicineCandidate): string[] {
+	const blockers = new Set<string>();
+	if (!candidate.name?.trim()) blockers.add('Medicine name is missing.');
+	if ((candidate.confidence ?? 0) < 0.75) blockers.add('Confidence is below 75%.');
+	for (const reason of candidate.uncertaintyReasons ?? []) {
+		if (reason.trim()) blockers.add(reason);
+	}
+	return [...blockers];
+}
+
+function candidateStatus(candidate: MedicineCandidate): MedicineCandidateState {
+	const blockers = candidateBlockers(candidate);
+	if (blockers.some((reason) => reason.toLowerCase().includes('missing'))) return 'blocked';
+	return blockers.length > 0 ? 'needs_review' : 'ready';
+}
+
+function candidateAiSummary(candidate: MedicineCandidate): string {
+	const parts = [candidate.name, candidate.generalUse, candidate.databaseMatch?.source]
+		.filter(Boolean)
+		.map((value) => `${value}`);
+	return parts.join(' | ');
+}
+
 class MedicineIntakeWorkflow {
 	private _status = $state<MedicineIntakeStatus>('idle');
 	private _locationId = $state<string | null>(null);
@@ -60,11 +109,15 @@ class MedicineIntakeWorkflow {
 	private _remainingDoses = $state<number | null>(null);
 	private _remainingDoseLabel = $state<'full' | 'half' | 'low' | 'empty' | 'unknown'>('unknown');
 	private _candidate = $state<MedicineCandidate | null>(null);
+	private _queuedScans = $state<MedicineQueuedScan[]>([]);
+	private _activeQueueId = $state<string | null>(null);
 	private _analysisProgress = $state<Progress | null>(null);
 	private _submissionProgress = $state<Progress | null>(null);
 	private _error = $state<string | null>(null);
 	private _warnings = $state<string[]>([]);
 	private abortController: AbortController | null = null;
+	private queueProcessing = false;
+	private missionId = createId('mission_medicine');
 	private _stateProxy: MedicineIntakeState | null = null;
 
 	get state(): MedicineIntakeState {
@@ -101,6 +154,10 @@ class MedicineIntakeWorkflow {
 							return workflow._remainingDoseLabel;
 						case 'candidate':
 							return workflow._candidate;
+						case 'queuedScans':
+							return workflow._queuedScans;
+						case 'activeQueueId':
+							return workflow._activeQueueId;
 						case 'error':
 							return workflow._error;
 						case 'warnings':
@@ -213,8 +270,18 @@ class MedicineIntakeWorkflow {
 				{ signal: this.abortController.signal }
 			);
 			this._analysisProgress = { current: 3, total: 3, message: 'Preparing medicine review...' };
-			this._candidate = this.attachLocalFiles(result.candidate);
+			this._candidate = this.attachLocalFiles(result.candidate, true);
 			this._warnings = result.warnings;
+			const scan = this.upsertCandidateRecord({
+				code: this._barcodeText.trim() || 'photo-analysis',
+				candidate: this._candidate,
+				warnings: result.warnings,
+				fallbackStatus: candidateStatus(this._candidate),
+				evidencePhotoIds: this._candidate.sourcePhotoIds.length
+					? this._candidate.sourcePhotoIds
+					: activePhotos.map((photo) => photo.id),
+			});
+			this._activeQueueId = scan.id;
 			this._status = 'reviewing';
 			return result;
 		} catch (error) {
@@ -255,8 +322,16 @@ class MedicineIntakeWorkflow {
 				{ signal: this.abortController.signal }
 			);
 			this._analysisProgress = { current: 2, total: 2, message: 'Preparing medicine review...' };
-			this._candidate = this.attachLocalFiles(result.candidate);
+			this._candidate = this.attachLocalFiles(result.candidate, false);
 			this._warnings = result.warnings;
+			const scan = this.upsertCandidateRecord({
+				code,
+				candidate: this._candidate,
+				warnings: result.warnings,
+				fallbackStatus: candidateStatus(this._candidate),
+				evidencePhotoIds: this._candidate.sourcePhotoIds,
+			});
+			this._activeQueueId = scan.id;
 			this._status = 'reviewing';
 			return result;
 		} catch (error) {
@@ -274,19 +349,232 @@ class MedicineIntakeWorkflow {
 		}
 	}
 
-	private attachLocalFiles(candidate: MedicineCandidate): MedicineCandidate {
+	enqueueBarcode(code: string): MedicineQueuedScan {
+		const normalized = code.trim();
+		const existing = this._queuedScans.find(
+			(scan) => scan.code === normalized && scan.status !== 'failed' && scan.status !== 'submitted'
+		);
+		if (existing) return existing;
+		const now = Date.now();
+		const scan: MedicineQueuedScan = {
+			id: createId('mq'),
+			missionId: this.missionId,
+			missionKind: 'medicine_intake',
+			code: normalized,
+			status: 'captured',
+			createdAtMs: now,
+			updatedAtMs: now,
+			selectedLocationId: this._locationId,
+			selectedLocationPath: this._locationPath,
+			evidencePhotoIds: this._photos.filter((photo) => !photo.ignored).map((photo) => photo.id),
+			userNote: this._note,
+			correctionHistory: [],
+			confidence: null,
+			blockerReasons: [],
+			duplicateSuspicions: [],
+			homeboxPayloadPreview: null,
+			warnings: [],
+		};
+		this._queuedScans = [scan, ...this._queuedScans];
+		void this.processQueuedScans();
+		return scan;
+	}
+
+	retryQueuedScan(id: string): void {
+		this._queuedScans = this._queuedScans.map((scan) =>
+			scan.id === id
+				? {
+						...scan,
+						status: 'recovered',
+						error: null,
+						updatedAtMs: Date.now(),
+					}
+				: scan
+		);
+		void this.processQueuedScans();
+	}
+
+	removeQueuedScan(id: string): void {
+		this._queuedScans = this._queuedScans.filter((scan) => scan.id !== id);
+		if (this._activeQueueId === id) {
+			this._activeQueueId = null;
+			this._candidate = null;
+		}
+	}
+
+	openQueuedScan(id: string): boolean {
+		const scan = this._queuedScans.find((item) => item.id === id);
+		if (
+			!scan?.candidate ||
+			!['ready', 'needs_review', 'blocked', 'failed', 'recovered'].includes(scan.status)
+		) {
+			return false;
+		}
+		this._candidate = this.attachLocalFiles(scan.candidate, false);
+		this._warnings = scan.warnings ?? [];
+		this._activeQueueId = id;
+		this._status = 'reviewing';
+		return true;
+	}
+
+	openNextReadyScan(): boolean {
+		const scan = this._queuedScans.find(
+			(item) => ['ready', 'needs_review', 'blocked', 'failed', 'recovered'].includes(item.status) && item.candidate
+		);
+		return scan ? this.openQueuedScan(scan.id) : false;
+	}
+
+	markActiveRecovered(): void {
+		if (!this._activeQueueId) return;
+		this._queuedScans = this._queuedScans.map((scan) =>
+			scan.id === this._activeQueueId
+				? { ...scan, status: 'recovered', error: null, updatedAtMs: Date.now() }
+				: scan
+		);
+	}
+
+	private async processQueuedScans(): Promise<void> {
+		if (this.queueProcessing) return;
+		this.queueProcessing = true;
+		try {
+			while (true) {
+				const scan = this._queuedScans.find(
+					(item) => item.status === 'captured' || item.status === 'recovered'
+				);
+				if (!scan) break;
+				this._queuedScans = this._queuedScans.map((item) =>
+					item.id === scan.id
+						? { ...item, status: 'analyzing', error: null, updatedAtMs: Date.now() }
+						: item
+				);
+				try {
+					const result = await vision.medicineLookup({
+						barcodeText: scan.code,
+						note: this._note,
+						expiryDate: this._expiryDate,
+						openedDate: this._openedDate,
+						remainingDoses: this._remainingDoses,
+						remainingDoseLabel: this._remainingDoseLabel,
+					});
+					this._queuedScans = this._queuedScans.map((item) =>
+						item.id === scan.id
+							? {
+									...item,
+									status: candidateStatus(result.candidate),
+									candidate: result.candidate,
+									warnings: result.warnings,
+									error: null,
+									aiSummary: candidateAiSummary(result.candidate),
+									confidence: result.candidate.confidence,
+									blockerReasons: candidateBlockers(result.candidate),
+									duplicateSuspicions: result.candidate.databaseMatch ? [] : ['No public database match.'],
+									homeboxPayloadPreview: buildMedicinePayload(result.candidate, this._locationId),
+									updatedAtMs: Date.now(),
+								}
+							: item
+					);
+				} catch (error) {
+					this._queuedScans = this._queuedScans.map((item) =>
+						item.id === scan.id
+							? {
+									...item,
+									status: 'failed',
+									error: error instanceof Error ? error.message : 'Medicine lookup failed',
+									updatedAtMs: Date.now(),
+								}
+							: item
+					);
+				}
+			}
+		} finally {
+			this.queueProcessing = false;
+		}
+	}
+
+	private upsertCandidateRecord(input: {
+		code: string;
+		candidate: MedicineCandidate;
+		warnings: string[];
+		fallbackStatus: MedicineCandidateState;
+		evidencePhotoIds: string[];
+	}): MedicineQueuedScan {
+		const now = Date.now();
+		const existing = this._queuedScans.find((scan) => scan.code === input.code);
+		const next: MedicineQueuedScan = {
+			...(existing ?? {
+				id: createId('mq'),
+				missionId: this.missionId,
+				missionKind: 'medicine_intake' as const,
+				code: input.code,
+				createdAtMs: now,
+				correctionHistory: [],
+				duplicateSuspicions: [],
+			}),
+			status: input.fallbackStatus,
+			updatedAtMs: now,
+			selectedLocationId: this._locationId,
+			selectedLocationPath: this._locationPath,
+			evidencePhotoIds: input.evidencePhotoIds,
+			userNote: this._note,
+			candidate: input.candidate,
+			warnings: input.warnings,
+			error: null,
+			aiSummary: candidateAiSummary(input.candidate),
+			confidence: input.candidate.confidence,
+			blockerReasons: candidateBlockers(input.candidate),
+			duplicateSuspicions: input.candidate.databaseMatch ? [] : ['No public database match.'],
+			homeboxPayloadPreview: buildMedicinePayload(input.candidate, this._locationId),
+		};
+		this._queuedScans = existing
+			? this._queuedScans.map((scan) => (scan.id === existing.id ? next : scan))
+			: [next, ...this._queuedScans];
+		return next;
+	}
+
+	private attachLocalFiles(candidate: MedicineCandidate, fallbackToAllPhotos: boolean): MedicineCandidate {
 		const files = candidate.sourcePhotoIds
 			.map((id) => this._photos.find((photo) => photo.id === id)?.file)
 			.filter((file): file is File => Boolean(file));
 		return {
 			...candidate,
-			originalFiles: files.length ? files : this._photos.map((photo) => photo.file),
+			originalFiles: files.length
+				? files
+				: fallbackToAllPhotos
+					? this._photos.map((photo) => photo.file)
+					: [],
 		};
 	}
 
 	updateCandidate(patch: Partial<MedicineCandidate>): void {
 		if (!this._candidate) return;
-		this._candidate = { ...this._candidate, ...patch };
+		const nextPatch = { ...patch };
+		if (
+			Object.prototype.hasOwnProperty.call(patch, 'generalUse') &&
+			!Object.prototype.hasOwnProperty.call(patch, 'description')
+		) {
+			nextPatch.description = patch.generalUse || null;
+		}
+		this._candidate = { ...this._candidate, ...nextPatch };
+		if (this._activeQueueId) {
+			const candidate = this._candidate;
+			this._queuedScans = this._queuedScans.map((scan) =>
+				scan.id === this._activeQueueId
+					? {
+							...scan,
+							status: scan.status === 'submitted' ? scan.status : candidateStatus(candidate),
+							candidate,
+							updatedAtMs: Date.now(),
+							correctionHistory: [
+								...scan.correctionHistory,
+								{ atMs: Date.now(), fields: Object.keys(patch) },
+							],
+							confidence: candidate.confidence,
+							blockerReasons: candidateBlockers(candidate),
+							homeboxPayloadPreview: buildMedicinePayload(candidate, this._locationId),
+						}
+					: scan
+			);
+		}
 	}
 
 	async submit(): Promise<boolean> {
@@ -298,24 +586,7 @@ class MedicineIntakeWorkflow {
 		this._status = 'submitting';
 		this._submissionProgress = { current: 0, total: 1, message: 'Creating medicine item...' };
 		try {
-			const request: BatchCreateRequest = {
-				location_id: this._locationId,
-				items: [
-					{
-						name: candidate.name,
-						quantity: candidate.quantity || 1,
-						description: candidate.description,
-						tag_ids: candidate.tag_ids,
-						manufacturer: candidate.manufacturer,
-						model_number: candidate.model_number,
-						serial_number: candidate.serial_number,
-						purchase_price: candidate.purchase_price,
-						purchase_from: candidate.purchase_from,
-						notes: candidate.notes,
-						custom_fields: medicineCustomFields(candidate),
-					},
-				],
-			};
+			const request = buildMedicinePayload(candidate, this._locationId);
 			const created = await items.create(request);
 			const item = created.created[0];
 			if (item?.id) {
@@ -324,13 +595,41 @@ class MedicineIntakeWorkflow {
 				}
 			}
 			this._submissionProgress = { current: 1, total: 1, message: 'Medicine submitted.' };
-			this._status = 'complete';
-			this.startNextAtSameLocation();
-			goto(resolve('/medicine-capture'));
+			if (this._activeQueueId) {
+				const submittedId = this._activeQueueId;
+				this._queuedScans = this._queuedScans.map((scan) =>
+					scan.id === submittedId ? { ...scan, status: 'submitted', updatedAtMs: Date.now() } : scan
+				);
+				const next = this._queuedScans.find(
+					(scan) =>
+						['ready', 'needs_review', 'blocked', 'failed', 'recovered'].includes(scan.status) &&
+						scan.candidate
+				);
+				if (next) {
+					this.openQueuedScan(next.id);
+				} else {
+					this._candidate = null;
+					this._activeQueueId = null;
+					this._status = 'capturing';
+					goto(resolve('/medicine-capture'));
+				}
+			} else {
+				this._status = 'complete';
+				this.startNextAtSameLocation();
+				goto(resolve('/medicine-capture'));
+			}
 			return true;
 		} catch (error) {
 			log.error('Medicine submission failed', error);
 			this._error = error instanceof Error ? error.message : 'Medicine submission failed';
+			if (this._activeQueueId) {
+				const message = this._error;
+				this._queuedScans = this._queuedScans.map((scan) =>
+					scan.id === this._activeQueueId
+						? { ...scan, status: 'failed', error: message, updatedAtMs: Date.now() }
+						: scan
+				);
+			}
 			this._status = 'reviewing';
 			return false;
 		} finally {
@@ -357,6 +656,9 @@ class MedicineIntakeWorkflow {
 		this._remainingDoses = null;
 		this._remainingDoseLabel = 'unknown';
 		this._candidate = null;
+		this._queuedScans = [];
+		this._activeQueueId = null;
+		this.missionId = createId('mission_medicine');
 		this._analysisProgress = null;
 		this._submissionProgress = null;
 		this._error = null;
@@ -381,6 +683,7 @@ class MedicineIntakeWorkflow {
 		this._remainingDoses = null;
 		this._remainingDoseLabel = 'unknown';
 		this._candidate = null;
+		this._activeQueueId = null;
 		this._analysisProgress = null;
 		this._submissionProgress = null;
 		this._error = null;

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, tick } from 'svelte';
 	import { medicineIntakeWorkflow } from '$lib/workflows/medicineIntake.svelte';
 	import { showToast } from '$lib/stores/ui.svelte';
 	import Button from '$lib/components/Button.svelte';
@@ -9,12 +9,25 @@
 	import BackLink from '$lib/components/BackLink.svelte';
 	import AnalysisProgressBar from '$lib/components/AnalysisProgressBar.svelte';
 	import type { MedicinePhotoKind } from '$lib/types';
-	import { Barcode, Camera, ImagePlus, Pencil, Sparkles, Trash2, VideoOff } from 'lucide-svelte';
+	import {
+		Barcode,
+		Camera,
+		AlertTriangle,
+		CheckCircle2,
+		Eye,
+		ImagePlus,
+		Loader2,
+		Pencil,
+		RotateCcw,
+		Sparkles,
+		Trash2,
+		VideoOff,
+		XCircle,
+	} from 'lucide-svelte';
 
 	const workflow = medicineIntakeWorkflow;
 	let videoElement = $state<HTMLVideoElement>();
 	let fileInput: HTMLInputElement;
-	let stream: MediaStream | null = null;
 	let cameraError = $state<string | null>(null);
 	let cameraStarting = $state(false);
 	let scannerMode = $state(false);
@@ -23,6 +36,7 @@
 	let barcodeControls: { stop: () => void } | null = null;
 	let editingCode = $state(false);
 	let lookupInFlight = $state(false);
+	let lastScannedCodes = new Map<string, number>();
 
 	const kindLabels: Record<MedicinePhotoKind, string> = {
 		front: 'Label',
@@ -35,77 +49,24 @@
 
 	onMount(() => {
 		if (!workflow.state.locationId) goto(resolve('/location'));
-		startCamera();
+		const releaseCamera = () => {
+			stopBarcodeScan();
+		};
+		window.addEventListener('pagehide', releaseCamera);
+		window.addEventListener('beforeunload', releaseCamera);
+		return () => {
+			window.removeEventListener('pagehide', releaseCamera);
+			window.removeEventListener('beforeunload', releaseCamera);
+			releaseCamera();
+		};
 	});
 
 	onDestroy(() => {
 		stopBarcodeScan();
-		stopCamera();
 	});
 
-	async function startCamera() {
-		cameraError = null;
-		cameraStarting = true;
-		try {
-			if (!window.isSecureContext) {
-				throw new Error('Camera needs HTTPS. Use companion.lan on your phone.');
-			}
-			stream = await navigator.mediaDevices.getUserMedia({
-				video: {
-					facingMode: { ideal: 'environment' },
-					width: { ideal: 1280 },
-					height: { ideal: 720 },
-				},
-				audio: false,
-			});
-			if (videoElement) {
-				videoElement.srcObject = stream;
-				await videoElement.play();
-			}
-		} catch (error) {
-			cameraError = error instanceof Error ? error.message : 'Camera unavailable.';
-			showToast(cameraError, 'warning');
-		} finally {
-			cameraStarting = false;
-		}
-	}
-
-	function stopCamera() {
-		stream?.getTracks().forEach((track) => track.stop());
-		stream = null;
-	}
-
-	function currentFrameBlob(): Promise<Blob> {
-		return new Promise((resolve, reject) => {
-			if (!videoElement?.videoWidth || !videoElement?.videoHeight) {
-				reject(new Error('Camera is not ready yet.'));
-				return;
-			}
-			const canvas = document.createElement('canvas');
-			canvas.width = videoElement.videoWidth;
-			canvas.height = videoElement.videoHeight;
-			const ctx = canvas.getContext('2d');
-			if (!ctx) {
-				reject(new Error('Canvas unavailable.'));
-				return;
-			}
-			ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-			canvas.toBlob(
-				(blob) => (blob ? resolve(blob) : reject(new Error('Could not capture photo.'))),
-				'image/jpeg',
-				0.92
-			);
-		});
-	}
-
-	async function capturePhoto(kind: MedicinePhotoKind = 'other') {
-		try {
-			const blob = await currentFrameBlob();
-			const file = new File([blob], `medicine-${Date.now()}.jpg`, { type: 'image/jpeg' });
-			workflow.addPhotos([file], kind);
-		} catch (error) {
-			showToast(error instanceof Error ? error.message : 'Could not capture photo', 'error');
-		}
+	function capturePhoto() {
+		fileInput?.click();
 	}
 
 	function addFiles(files: FileList | null) {
@@ -114,22 +75,53 @@
 		if (fileInput) fileInput.value = '';
 	}
 
-	function setRemainingDoses(value: string) {
-		const trimmed = value.trim();
-		workflow.setRemainingDoses(trimmed === '' ? null : Math.max(0, Number(trimmed) || 0));
-	}
-
 	async function startBarcodeScan() {
-		if (!videoElement || !stream) {
-			showToast('Camera is not ready yet', 'warning');
+		if (!window.isSecureContext) {
+			showToast('Camera needs HTTPS. Use companion.lan on your phone.', 'warning');
 			return;
 		}
+		cameraError = null;
+		cameraStarting = true;
+		stopBarcodeScan();
 		scannerMode = true;
 		scannerStatus = 'Point the box barcode at the frame.';
 		try {
-			const { BrowserMultiFormatReader } = await import('@zxing/browser');
-			barcodeReader = new BrowserMultiFormatReader();
-			barcodeControls = await barcodeReader.decodeFromVideoElement(
+			await tick();
+			if (!videoElement) {
+				throw new Error('Scanner video did not mount. Try again or use Photos.');
+			}
+			const [{ BrowserMultiFormatReader }, { BarcodeFormat, DecodeHintType }] = await Promise.all([
+				import('@zxing/browser'),
+				import('@zxing/library'),
+			]);
+			const hints = new Map();
+			hints.set(DecodeHintType.TRY_HARDER, true);
+			hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+				BarcodeFormat.DATA_MATRIX,
+				BarcodeFormat.EAN_13,
+				BarcodeFormat.EAN_8,
+				BarcodeFormat.CODE_128,
+				BarcodeFormat.CODE_39,
+				BarcodeFormat.ITF,
+				BarcodeFormat.QR_CODE,
+				BarcodeFormat.UPC_A,
+				BarcodeFormat.UPC_E,
+			]);
+			barcodeReader = new BrowserMultiFormatReader(hints, {
+				delayBetweenScanAttempts: 120,
+				delayBetweenScanSuccess: 1200,
+			});
+			const constraints = {
+				video: {
+					facingMode: { ideal: 'environment' },
+					width: { ideal: 1920 },
+					height: { ideal: 1080 },
+					advanced: [{ focusMode: 'continuous' } as MediaTrackConstraintSet],
+				},
+				audio: false,
+			} as MediaStreamConstraints;
+			barcodeControls = await barcodeReader.decodeFromConstraints(
+				constraints,
 				videoElement,
 				(result: any, error: unknown) => {
 					if (result) {
@@ -141,35 +133,41 @@
 				}
 			);
 		} catch (error) {
+			cameraError =
+				error instanceof Error && error.message
+					? error.message
+					: 'Scanner could not start. Try photos or type the code.';
 			scannerMode = false;
-			scannerStatus = 'Scanner could not start. Try again or type the code.';
+			scannerStatus = cameraError;
+			showToast(scannerStatus, 'warning');
 			console.warn(error);
+		} finally {
+			cameraStarting = false;
 		}
 	}
 
 	async function handleScannedCode(code: string) {
-		if (lookupInFlight) return;
-		lookupInFlight = true;
-		workflow.setBarcodeText(code);
-		scannerStatus = `Searching ${code}...`;
-		scannerMode = false;
+		const normalized = code.trim();
+		const now = Date.now();
+		if (!normalized || now - (lastScannedCodes.get(normalized) ?? 0) < 2500) return;
+		lastScannedCodes.set(normalized, now);
+		workflow.setBarcodeText(normalized);
+		const queued = workflow.enqueueBarcode(normalized);
+		scannerStatus =
+			queued.status === 'ready'
+				? `Already ready: ${normalized}`
+				: queued.status === 'analyzing'
+					? `Already looking up: ${normalized}`
+					: `Looking up ${normalized}`;
 		editingCode = false;
-		stopBarcodeScan();
-		const result = await workflow.lookupBarcode();
-		lookupInFlight = false;
-		if (result) {
-			showToast('Barcode ready for review', 'success');
-			goto(resolve('/medicine-review'));
-		} else {
-			scannerStatus = workflow.state.error ?? 'Lookup failed. You can add photos or edit the code.';
-			showToast(scannerStatus, 'warning');
-		}
+		showToast('Medicine added to inbox', 'success');
 	}
 
 	function stopBarcodeScan() {
 		barcodeControls?.stop();
 		barcodeControls = null;
 		barcodeReader = null;
+		scannerMode = false;
 	}
 
 	async function analyze() {
@@ -179,12 +177,37 @@
 	}
 
 	async function lookupTypedCode() {
+		const code = workflow.state.barcodeText.trim();
+		if (!code) return;
 		lookupInFlight = true;
-		scannerStatus = 'Searching code...';
-		const result = await workflow.lookupBarcode();
+		const queued = workflow.enqueueBarcode(code);
 		lookupInFlight = false;
-		if (result) goto(resolve('/medicine-review'));
-		else if (workflow.state.error) showToast(workflow.state.error, 'error');
+		editingCode = false;
+		scannerStatus = `Looking up ${queued.code}`;
+		showToast('Medicine added to inbox', 'success');
+	}
+
+	function reviewQueuedScan(id: string) {
+		if (workflow.openQueuedScan(id)) goto(resolve('/medicine-review'));
+	}
+
+	function reviewNextReady() {
+		if (workflow.openNextReadyScan()) goto(resolve('/medicine-review'));
+	}
+
+	function queueLabel(status: string) {
+		if (status === 'captured') return 'Captured';
+		if (status === 'analyzing') return 'Looking it up';
+		if (status === 'needs_review') return 'Needs review';
+		if (status === 'blocked') return 'Blocked';
+		if (status === 'ready') return 'Ready to review';
+		if (status === 'submitted') return 'Saved';
+		if (status === 'recovered') return 'Recovered';
+		return 'Failed';
+	}
+
+	function reviewable(status: string) {
+		return ['ready', 'needs_review', 'blocked', 'failed', 'recovered'].includes(status);
 	}
 </script>
 
@@ -196,8 +219,10 @@
 	<StepIndicator currentStep={2} />
 	<BackLink href="/mode" label="Back to mode choice" />
 
-	<h2 class="mb-1 text-h2 text-neutral-100">Medicine Intake</h2>
-	<p class="mb-4 text-body-sm text-neutral-400">{workflow.state.locationPath}</p>
+	<h2 class="mb-1 text-h2 text-neutral-100">Medicine Mission</h2>
+	<p class="mb-4 text-body-sm text-neutral-400">
+		{workflow.state.locationPath} - scan each box, keep the evidence, then review only the candidates that need a decision.
+	</p>
 
 	<section class="mb-4 overflow-hidden rounded-xl border border-neutral-700 bg-neutral-950">
 		<div class="relative aspect-[4/3] bg-neutral-900">
@@ -205,10 +230,31 @@
 				<div class="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
 					<VideoOff size={36} strokeWidth={1.5} class="text-neutral-500" />
 					<p class="text-body-sm text-neutral-300">{cameraError}</p>
-					<Button variant="secondary" onclick={() => fileInput.click()}>
-						<ImagePlus size={18} strokeWidth={1.5} />
-						<span>Add Photos</span>
-					</Button>
+					<div class="grid w-full max-w-xs grid-cols-2 gap-2">
+						<Button variant="secondary" onclick={startBarcodeScan}>
+							<Barcode size={18} strokeWidth={1.5} />
+							<span>Retry</span>
+						</Button>
+						<Button variant="secondary" onclick={() => fileInput.click()}>
+							<ImagePlus size={18} strokeWidth={1.5} />
+							<span>Photos</span>
+						</Button>
+					</div>
+				</div>
+			{:else if !scannerMode}
+				<div class="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+					<Barcode size={36} strokeWidth={1.5} class="text-neutral-500" />
+					<p class="text-body-sm text-neutral-300">Start barcode scan when you're ready.</p>
+					<div class="grid w-full max-w-xs grid-cols-2 gap-2">
+						<Button variant="primary" onclick={startBarcodeScan}>
+							<Barcode size={18} strokeWidth={1.5} />
+							<span>Scan</span>
+						</Button>
+						<Button variant="secondary" onclick={() => fileInput.click()}>
+							<ImagePlus size={18} strokeWidth={1.5} />
+							<span>Photos</span>
+						</Button>
+					</div>
 				</div>
 			{:else}
 				<video
@@ -230,9 +276,9 @@
 		</div>
 		<div class="grid gap-3 p-3">
 			<div class="grid grid-cols-2 gap-3">
-				<Button variant="primary" onclick={() => capturePhoto('other')}>
+				<Button variant="primary" onclick={capturePhoto}>
 					<Camera size={18} strokeWidth={1.5} />
-					<span>Take Photo</span>
+					<span>Add Photo</span>
 				</Button>
 				{#if scannerMode}
 					<Button
@@ -248,7 +294,7 @@
 				{:else}
 					<Button variant="secondary" onclick={startBarcodeScan} disabled={lookupInFlight}>
 						<Barcode size={18} strokeWidth={1.5} />
-						<span>{lookupInFlight ? 'Searching' : 'Scan Code'}</span>
+						<span>{lookupInFlight ? 'Adding' : 'Scan Labels'}</span>
 					</Button>
 				{/if}
 			</div>
@@ -260,7 +306,7 @@
 					scannerStatus = '';
 				}}
 			>
-				<Pencil size={18} strokeWidth={1.5} />
+					<Pencil size={18} strokeWidth={1.5} />
 				<span>Type Code</span>
 			</Button>
 			{#if scannerMode || scannerStatus}
@@ -286,7 +332,7 @@
 			<div class="mb-3 flex items-center justify-between gap-3">
 				<div class="flex items-center gap-2 text-neutral-100">
 					<Barcode size={18} strokeWidth={1.5} />
-					<h3 class="font-semibold">Scanned Code</h3>
+					<h3 class="font-semibold">Manual Code</h3>
 				</div>
 				<button
 					type="button"
@@ -309,15 +355,110 @@
 			{/if}
 			<Button variant="secondary" full onclick={lookupTypedCode} disabled={lookupInFlight}>
 				<Barcode size={18} strokeWidth={1.5} />
-				<span>{lookupInFlight ? 'Searching' : 'Lookup Code'}</span>
+				<span>{lookupInFlight ? 'Adding' : 'Add to Inbox'}</span>
 			</Button>
 		</section>
 	{/if}
 
+	<section class="mb-4 rounded-xl border border-neutral-700 bg-neutral-900 p-4">
+		<div class="mb-3 flex items-center justify-between gap-3">
+			<div>
+				<h3 class="font-semibold text-neutral-100">Meds Found</h3>
+				<p class="text-caption text-neutral-500">
+					{workflow.state.queuedScans.length} captured, {workflow.state.queuedScans.filter(
+						(scan) => reviewable(scan.status)
+					).length} reviewable
+				</p>
+			</div>
+			<Button
+				variant="secondary"
+				size="sm"
+				onclick={reviewNextReady}
+				disabled={!workflow.state.queuedScans.some((scan) => scan.status === 'ready')}
+			>
+				<Eye size={16} strokeWidth={1.5} />
+				<span>Review</span>
+			</Button>
+		</div>
+
+		{#if workflow.state.queuedScans.length === 0}
+			<p class="rounded-lg bg-neutral-950 px-3 py-4 text-center text-body-sm text-neutral-500">
+				Scan box barcodes or add label photos. Candidates stay here until saved or recovered.
+			</p>
+		{:else}
+			<div class="grid gap-2">
+				{#each workflow.state.queuedScans as scan (scan.id)}
+					<div class="rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+						<div class="flex items-center justify-between gap-3">
+							<div class="min-w-0">
+								<p class="truncate text-body-sm font-semibold text-neutral-200">
+									{scan.candidate?.name ?? scan.code}
+								</p>
+								<p class="truncate text-caption text-neutral-500">
+									{scan.blockerReasons[0] ??
+										scan.candidate?.generalUse ??
+										scan.error ??
+										queueLabel(scan.status)}
+								</p>
+								<p class="mt-1 text-caption text-neutral-600">
+									{queueLabel(scan.status)}
+									{#if scan.confidence !== null}
+										- {Math.round(scan.confidence * 100)}% confidence
+									{/if}
+								</p>
+							</div>
+							<div class="flex items-center gap-2">
+								{#if scan.status === 'analyzing' || scan.status === 'captured' || scan.status === 'recovered'}
+									<Loader2 class="animate-spin text-primary-300" size={18} strokeWidth={1.5} />
+								{:else if scan.status === 'ready' || scan.status === 'submitted'}
+									<CheckCircle2 class="text-success-300" size={18} strokeWidth={1.5} />
+								{:else if scan.status === 'needs_review' || scan.status === 'blocked'}
+									<AlertTriangle class="text-warning-300" size={18} strokeWidth={1.5} />
+								{:else if scan.status === 'failed'}
+									<XCircle class="text-error-300" size={18} strokeWidth={1.5} />
+								{:else}
+									<CheckCircle2 class="text-neutral-500" size={18} strokeWidth={1.5} />
+								{/if}
+								{#if reviewable(scan.status)}
+									<button
+										type="button"
+										class="btn-icon"
+										aria-label="Review medicine candidate"
+										onclick={() => reviewQueuedScan(scan.id)}
+									>
+										<Eye size={16} strokeWidth={1.5} />
+									</button>
+								{/if}
+								{#if scan.status === 'failed'}
+									<button
+										type="button"
+										class="btn-icon"
+										aria-label="Recover failed candidate"
+										onclick={() => workflow.retryQueuedScan(scan.id)}
+									>
+										<RotateCcw size={16} strokeWidth={1.5} />
+									</button>
+								{/if}
+								<button
+									type="button"
+									class="btn-icon"
+									aria-label="Remove queued scan"
+									onclick={() => workflow.removeQueuedScan(scan.id)}
+								>
+									<Trash2 size={16} strokeWidth={1.5} />
+								</button>
+							</div>
+						</div>
+					</div>
+				{/each}
+			</div>
+		{/if}
+	</section>
+
 	<section class="mb-4 grid gap-3 rounded-xl border border-neutral-700 bg-neutral-900 p-4">
 		<div class="grid grid-cols-2 gap-3">
 			<label class="grid gap-1 text-body-sm text-neutral-300">
-				<span>Expiry</span>
+				<span>Expiry, if visible</span>
 				<input
 					class="input-sm"
 					type="month"
@@ -326,7 +467,7 @@
 				/>
 			</label>
 			<label class="grid gap-1 text-body-sm text-neutral-300">
-				<span>Opened</span>
+				<span>Opened, if known</span>
 				<input
 					class="input-sm"
 					type="date"
@@ -335,37 +476,9 @@
 				/>
 			</label>
 		</div>
-		<label class="grid gap-1 text-body-sm text-neutral-300">
-			<span>Doses left</span>
-			<input
-				class="input-sm"
-				type="number"
-				min="0"
-				inputmode="numeric"
-				value={workflow.state.remainingDoses ?? ''}
-				oninput={(event) => setRemainingDoses(event.currentTarget.value)}
-			/>
-		</label>
-		<div class="grid grid-cols-5 gap-2">
-			{#each ['full', 'half', 'low', 'empty', 'unknown'] as label (label)}
-				<button
-					type="button"
-					class="rounded-lg border px-2 py-2 text-caption capitalize {workflow.state
-						.remainingDoseLabel === label
-						? 'border-primary-500 bg-primary-500/20 text-primary-200'
-						: 'border-neutral-700 bg-neutral-800 text-neutral-300'}"
-					onclick={() => workflow.setRemainingDoseLabel(label as any)}
-				>
-					{label === 'unknown' ? '?' : label}
-				</button>
-			{/each}
-		</div>
-	</section>
-
-	<section class="mb-4 rounded-xl border border-neutral-700 bg-neutral-900 p-4">
 		<textarea
 			class="input min-h-24"
-			placeholder="Notes: opened today, keep cold, almost empty..."
+			placeholder="Optional note: keep cold, almost empty, leaflet photo added..."
 			value={workflow.state.note}
 			oninput={(event) => workflow.setNote(event.currentTarget.value)}
 		></textarea>
@@ -442,8 +555,15 @@
 </div>
 
 <div class="fixed-bottom-panel p-4">
-	<Button variant="primary" full onclick={analyze}>
-		<Sparkles size={18} strokeWidth={1.5} />
-		<span>Analyze Photos</span>
-	</Button>
+	{#if workflow.state.queuedScans.some((scan) => reviewable(scan.status))}
+		<Button variant="primary" full onclick={reviewNextReady}>
+			<Eye size={18} strokeWidth={1.5} />
+			<span>Open Mission Review</span>
+		</Button>
+	{:else}
+		<Button variant="primary" full onclick={analyze} disabled={workflow.state.photos.length === 0}>
+			<Sparkles size={18} strokeWidth={1.5} />
+			<span>{workflow.state.photos.length === 0 ? 'Scan or Add Photos' : 'Analyze Photos'}</span>
+		</Button>
+	{/if}
 </div>

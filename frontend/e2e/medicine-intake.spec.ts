@@ -2,8 +2,9 @@ import { expect, test, type Page } from '@playwright/test';
 
 const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 
-async function mockCompanionApi(page: Page) {
+async function mockCompanionApi(page: Page, options: { failFirstSubmit?: boolean } = {}) {
 	let createdMedicinePayload: unknown = null;
+	let submitAttempts = 0;
 
 	await page.addInitScript((expiry) => {
 		window.localStorage.setItem('hbc_token', 'e2e-token');
@@ -94,7 +95,7 @@ async function mockCompanionApi(page: Page) {
 						name: 'DESLORATADINE BIOGARAN 5 mg, comprime pellicule',
 						quantity: 1,
 						description:
-							'Medicine identified from a scanned package code. Review the fields before saving.',
+							'Not medical advice; verify in the official notice: DESLORATADINE BIOGARAN soulage les symptomes associes a la rhinite allergique.',
 						notes: null,
 						activeIngredient: 'DESLORATADINE',
 						strength: null,
@@ -147,6 +148,14 @@ async function mockCompanionApi(page: Page) {
 		}
 
 		if (path === '/items' && method === 'POST') {
+			submitAttempts += 1;
+			if (options.failFirstSubmit && submitAttempts === 1) {
+				await route.fulfill({
+					status: 503,
+					json: { detail: 'Homebox temporarily unavailable' },
+				});
+				return;
+			}
 			createdMedicinePayload = route.request().postDataJSON();
 			await route.fulfill({
 				json: {
@@ -166,6 +175,7 @@ async function mockCompanionApi(page: Page) {
 
 	return {
 		getCreatedMedicinePayload: () => createdMedicinePayload,
+		getSubmitAttempts: () => submitAttempts,
 	};
 }
 
@@ -181,28 +191,33 @@ test('medicine barcode intake can submit and continue scanning at the same locat
 	await page.getByRole('button', { name: /medicine intake/i }).click();
 
 	await expect(page).toHaveURL(/\/medicine-capture$/);
-	await expect(page.getByRole('heading', { name: 'Medicine Intake' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Medicine Mission' })).toBeVisible();
 
-	await page.getByLabel('Expiry').fill('2027-08');
-	await page.getByLabel('Opened').fill('2026-05-06');
+	await page.getByLabel('Expiry, if visible').fill('2027-08');
+	await page.getByLabel('Opened, if known').fill('2026-05-06');
 	await page.getByRole('button', { name: /type code/i }).click();
 	await page.getByPlaceholder('Correct barcode or CIP13').fill('3400941999031');
-	await page.getByRole('button', { name: /lookup code/i }).click();
+	await page.getByRole('button', { name: /add to inbox/i }).click();
+	await expect(page.getByText(/DESLORATADINE BIOGARAN/)).toBeVisible();
+	await page.getByRole('button', { name: /review medicine candidate/i }).click();
 
 	await expect(page).toHaveURL(/\/medicine-review$/);
+	await expect(page.getByRole('heading', { name: 'Medicine Command Center' })).toBeVisible();
 	await expect(page.getByLabel('Name')).toHaveValue(/DESLORATADINE BIOGARAN/);
-	await expect(page.getByLabel('General use')).toHaveValue(
+	await expect(page.getByLabel("What it's for")).toHaveValue(
 		/Not medical advice; verify in the official notice/
 	);
 	await expect(page.getByLabel('Expiry')).toHaveValue('2027-08');
-	await expect(page.getByLabel('Opened')).toHaveValue('2026-05-06');
 	await expect(page.getByPlaceholder('Official medicine page URL')).toHaveValue(/61223605\/extrait/);
+	await expect(page.getByText('Homebox Payload Preview')).toBeVisible();
+	await expect(page.getByText('"location_id": "med-box-1"')).toBeVisible();
+	await page.getByRole('button', { name: /dismiss notification/i }).click();
 	await page.screenshot({ path: 'test-results/medicine-review.png', fullPage: true });
 
-	await page.getByRole('button', { name: /submit medicine/i }).click();
+	await page.getByRole('button', { name: /save medicine/i }).click();
 
 	await expect(page).toHaveURL(/\/medicine-capture$/);
-	await expect(page.getByRole('heading', { name: 'Medicine Intake' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Medicine Mission' })).toBeVisible();
 	await expect(page.getByText('medicament boite 1')).toBeVisible();
 	await expect(page.getByText('Photos (0)')).toBeVisible();
 	await expect(page.getByPlaceholder('Correct barcode or CIP13')).toHaveCount(0);
@@ -215,7 +230,8 @@ test('medicine barcode intake can submit and continue scanning at the same locat
 	expect(payload.items?.[0]).toMatchObject({
 		name: 'DESLORATADINE BIOGARAN 5 mg, comprime pellicule',
 		quantity: 1,
-		description: 'Medicine identified from a scanned package code. Review the fields before saving.',
+		description:
+			'Not medical advice; verify in the official notice: DESLORATADINE BIOGARAN soulage les symptomes associes a la rhinite allergique.',
 		notes: null,
 	});
 	expect(payload.items?.[0]?.custom_fields).toMatchObject({
@@ -234,5 +250,43 @@ test('medicine barcode intake can submit and continue scanning at the same locat
 			'https://base-donnees-publique.medicaments.gouv.fr/medicament/61223605/extrait#tab-notice',
 		'Official RCP':
 			'https://base-donnees-publique.medicaments.gouv.fr/medicament/61223605/extrait#tab-rcp',
+	});
+});
+
+test('medicine mission keeps a failed submit recoverable with metadata intact', async ({ page }) => {
+	const api = await mockCompanionApi(page, { failFirstSubmit: true });
+
+	await page.goto('/location');
+	await page.getByPlaceholder('Search all locations...').fill('medicament');
+	await page.getByRole('button', { name: /medicament boite 1/i }).click();
+	await page.getByRole('button', { name: /continue to capture/i }).click();
+	await page.getByRole('button', { name: /medicine intake/i }).click();
+
+	await page.getByLabel('Expiry, if visible').fill('2027-08');
+	await page.getByLabel('Opened, if known').fill('2026-05-06');
+	await page.getByRole('button', { name: /type code/i }).click();
+	await page.getByPlaceholder('Correct barcode or CIP13').fill('3400941999031');
+	await page.getByRole('button', { name: /add to inbox/i }).click();
+	await expect(page.getByText(/DESLORATADINE BIOGARAN/)).toBeVisible();
+	await page.getByRole('button', { name: /review medicine candidate/i }).click();
+
+	await page.getByRole('button', { name: /save medicine/i }).click();
+	await expect(page.getByRole('listitem').filter({ hasText: /Homebox temporarily unavailable/i })).toBeVisible();
+	await expect(page.getByRole('button', { name: /recover candidate/i })).toBeVisible();
+	await page.getByRole('button', { name: /recover candidate/i }).click();
+	await page.getByLabel('Notes').fill('Recovered after a temporary Homebox outage.');
+	await expect(page.getByText('"Opened date": "2026-05-06"')).toBeVisible();
+	await page.getByRole('button', { name: /save medicine/i }).click();
+
+	await expect(page).toHaveURL(/\/medicine-capture$/);
+	expect(api.getSubmitAttempts()).toBe(2);
+	const payload = api.getCreatedMedicinePayload() as {
+		items?: Array<{ notes?: string | null; custom_fields?: Record<string, string> }>;
+	};
+	expect(payload.items?.[0]?.notes).toBe('Recovered after a temporary Homebox outage.');
+	expect(payload.items?.[0]?.custom_fields).toMatchObject({
+		'Expiry date': '2027-08',
+		'Opened date': '2026-05-06',
+		CIP13: '3400941999031',
 	});
 });
