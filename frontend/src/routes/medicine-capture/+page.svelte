@@ -48,7 +48,12 @@
 	};
 
 	onMount(() => {
-		if (!workflow.state.locationId) goto(resolve('/location'));
+		void (async () => {
+			if (!workflow.state.locationId) {
+				await workflow.recover();
+			}
+			if (!workflow.state.locationId) goto(resolve('/location'));
+		})();
 		const releaseCamera = () => {
 			stopBarcodeScan();
 		};

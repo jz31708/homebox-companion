@@ -290,3 +290,50 @@ test('medicine mission keeps a failed submit recoverable with metadata intact', 
 		CIP13: '3400941999031',
 	});
 });
+
+test('medicine mission survives phone reload before review with evidence and payload intact', async ({
+	page,
+}) => {
+	const api = await mockCompanionApi(page);
+
+	await page.goto('/location');
+	await page.getByPlaceholder('Search all locations...').fill('medicament');
+	await page.getByRole('button', { name: /medicament boite 1/i }).click();
+	await page.getByRole('button', { name: /continue to capture/i }).click();
+	await page.getByRole('button', { name: /medicine intake/i }).click();
+
+	await page.getByLabel('Expiry, if visible').fill('2027-08');
+	await page.getByLabel('Opened, if known').fill('2026-05-06');
+	await page.getByRole('button', { name: /type code/i }).click();
+	await page.getByPlaceholder('Correct barcode or CIP13').fill('3400941999031');
+	await page.getByRole('button', { name: /add to inbox/i }).click();
+	await expect(page.getByText(/DESLORATADINE BIOGARAN/)).toBeVisible();
+
+	await page.reload();
+	await expect(page).toHaveURL(/\/medicine-capture$/);
+	await expect(page.getByRole('heading', { name: 'Medicine Mission' })).toBeVisible();
+	await expect(page.getByText('medicament boite 1')).toBeVisible();
+	await expect(page.getByText(/DESLORATADINE BIOGARAN/)).toBeVisible();
+	await expect(page.getByText(/90% confidence/)).toBeVisible();
+	await page.getByRole('button', { name: /review medicine candidate/i }).click();
+
+	await expect(page.getByRole('heading', { name: 'Medicine Command Center' })).toBeVisible();
+	await page.reload();
+	await expect(page.getByRole('heading', { name: 'Medicine Command Center' })).toBeVisible();
+	await expect(page.getByLabel('Expiry')).toHaveValue('2027-08');
+	await expect(page.getByText('"Opened date": "2026-05-06"')).toBeVisible();
+	await expect(page.getByText('"location_id": "med-box-1"')).toBeVisible();
+
+	await page.getByRole('button', { name: /save medicine/i }).click();
+	await expect(page).toHaveURL(/\/medicine-capture$/);
+	const payload = api.getCreatedMedicinePayload() as {
+		location_id?: string;
+		items?: Array<{ custom_fields?: Record<string, string> }>;
+	};
+	expect(payload.location_id).toBe('med-box-1');
+	expect(payload.items?.[0]?.custom_fields).toMatchObject({
+		'Expiry date': '2027-08',
+		'Opened date': '2026-05-06',
+		CIP13: '3400941999031',
+	});
+});

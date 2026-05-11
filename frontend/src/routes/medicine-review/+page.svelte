@@ -14,7 +14,13 @@
 	const workflow = medicineIntakeWorkflow;
 
 	onMount(() => {
-		if (!workflow.state.candidate) goto(resolve('/medicine-capture'));
+		void (async () => {
+			if (!workflow.state.candidate) {
+				await workflow.recover();
+				if (!workflow.state.candidate) workflow.openNextReadyScan();
+			}
+			if (!workflow.state.candidate) goto(resolve('/medicine-capture'));
+		})();
 	});
 
 	function patch(patch: Partial<MedicineCandidate>) {

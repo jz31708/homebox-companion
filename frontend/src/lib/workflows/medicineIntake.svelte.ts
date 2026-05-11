@@ -2,6 +2,7 @@ import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 import { items, vision } from '$lib/api';
 import { workflowLogger as log } from '$lib/utils/logger';
+import * as medicineMissionPersistence from '$lib/services/medicineMissionPersistence';
 import type {
 	BatchCreateRequest,
 	MedicineCandidate,
@@ -14,6 +15,8 @@ import type {
 	MedicineQueuedScan,
 	Progress,
 } from '$lib/types';
+
+const AUTO_PERSIST_DEBOUNCE_MS = 1000;
 
 function createId(prefix: string): string {
 	return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -119,6 +122,79 @@ class MedicineIntakeWorkflow {
 	private queueProcessing = false;
 	private missionId = createId('mission_medicine');
 	private _stateProxy: MedicineIntakeState | null = null;
+	private persistedCreatedAt: number | null = null;
+	private persistedSessionId: string | null = null;
+	private persistTimeout: ReturnType<typeof setTimeout> | null = null;
+	private persistChain: Promise<void> = Promise.resolve();
+	private isFirstEffectRun = true;
+
+	constructor() {
+		if (typeof window !== 'undefined') this.setupAutoPersist();
+	}
+
+	private setupAutoPersist(): void {
+		$effect.root(() => {
+			$effect(() => {
+				const status = this._status;
+				const locationId = this._locationId;
+				const locationName = this._locationName;
+				const locationPath = this._locationPath;
+				const startedAtMs = this._startedAtMs;
+				const photos = this._photos;
+				const note = this._note;
+				const barcodeText = this._barcodeText;
+				const expiryDate = this._expiryDate;
+				const openedDate = this._openedDate;
+				const remainingDoses = this._remainingDoses;
+				const remainingDoseLabel = this._remainingDoseLabel;
+				const candidate = this._candidate;
+				const queuedScans = this._queuedScans;
+				const activeQueueId = this._activeQueueId;
+				const warnings = this._warnings;
+				const error = this._error;
+
+				void locationId;
+				void locationName;
+				void locationPath;
+				void startedAtMs;
+				void photos.length;
+				void note;
+				void barcodeText;
+				void expiryDate;
+				void openedDate;
+				void remainingDoses;
+				void remainingDoseLabel;
+				void candidate?.id;
+				void queuedScans.length;
+				void activeQueueId;
+				void warnings.length;
+				void error;
+
+				if (this.isFirstEffectRun) {
+					this.isFirstEffectRun = false;
+					return;
+				}
+				if (status === 'idle' || status === 'complete' || status === 'submitting') return;
+				this.schedulePersist();
+			});
+		});
+		window.addEventListener('beforeunload', () => this.flushPendingPersist());
+	}
+
+	private schedulePersist(): void {
+		if (this.persistTimeout) clearTimeout(this.persistTimeout);
+		this.persistTimeout = setTimeout(() => {
+			this.persistTimeout = null;
+			void this.persistAsync();
+		}, AUTO_PERSIST_DEBOUNCE_MS);
+	}
+
+	private flushPendingPersist(): void {
+		if (!this.persistTimeout) return;
+		clearTimeout(this.persistTimeout);
+		this.persistTimeout = null;
+		void this.persistAsync();
+	}
 
 	get state(): MedicineIntakeState {
 		if (!this._stateProxy) {
@@ -376,6 +452,7 @@ class MedicineIntakeWorkflow {
 			warnings: [],
 		};
 		this._queuedScans = [scan, ...this._queuedScans];
+		void this.persistAsync();
 		void this.processQueuedScans();
 		return scan;
 	}
@@ -400,6 +477,7 @@ class MedicineIntakeWorkflow {
 			this._activeQueueId = null;
 			this._candidate = null;
 		}
+		void this.persistAsync();
 	}
 
 	openQueuedScan(id: string): boolean {
@@ -414,6 +492,7 @@ class MedicineIntakeWorkflow {
 		this._warnings = scan.warnings ?? [];
 		this._activeQueueId = id;
 		this._status = 'reviewing';
+		void this.persistAsync();
 		return true;
 	}
 
@@ -447,6 +526,7 @@ class MedicineIntakeWorkflow {
 						? { ...item, status: 'analyzing', error: null, updatedAtMs: Date.now() }
 						: item
 				);
+				await this.persistAsync();
 				try {
 					const result = await vision.medicineLookup({
 						barcodeText: scan.code,
@@ -456,7 +536,7 @@ class MedicineIntakeWorkflow {
 						remainingDoses: this._remainingDoses,
 						remainingDoseLabel: this._remainingDoseLabel,
 					});
-					this._queuedScans = this._queuedScans.map((item) =>
+					const nextScans: MedicineQueuedScan[] = this._queuedScans.map((item) =>
 						item.id === scan.id
 							? {
 									...item,
@@ -473,17 +553,21 @@ class MedicineIntakeWorkflow {
 								}
 							: item
 					);
+					await this.persistSnapshot({ queuedScans: nextScans });
+					this._queuedScans = nextScans;
 				} catch (error) {
-					this._queuedScans = this._queuedScans.map((item) =>
+					const nextScans: MedicineQueuedScan[] = this._queuedScans.map((item) =>
 						item.id === scan.id
 							? {
 									...item,
-									status: 'failed',
+									status: 'failed' as const,
 									error: error instanceof Error ? error.message : 'Medicine lookup failed',
 									updatedAtMs: Date.now(),
 								}
 							: item
 					);
+					await this.persistSnapshot({ queuedScans: nextScans });
+					this._queuedScans = nextScans;
 				}
 			}
 		} finally {
@@ -528,6 +612,7 @@ class MedicineIntakeWorkflow {
 		this._queuedScans = existing
 			? this._queuedScans.map((scan) => (scan.id === existing.id ? next : scan))
 			: [next, ...this._queuedScans];
+		void this.persistAsync();
 		return next;
 	}
 
@@ -575,6 +660,7 @@ class MedicineIntakeWorkflow {
 					: scan
 			);
 		}
+		void this.persistAsync();
 	}
 
 	async submit(): Promise<boolean> {
@@ -611,11 +697,13 @@ class MedicineIntakeWorkflow {
 					this._candidate = null;
 					this._activeQueueId = null;
 					this._status = 'capturing';
+					await this.persistAsync();
 					goto(resolve('/medicine-capture'));
 				}
 			} else {
 				this._status = 'complete';
 				this.startNextAtSameLocation();
+				await this.persistAsync();
 				goto(resolve('/medicine-capture'));
 			}
 			return true;
@@ -630,6 +718,7 @@ class MedicineIntakeWorkflow {
 						: scan
 				);
 			}
+			await this.persistAsync();
 			this._status = 'reviewing';
 			return false;
 		} finally {
@@ -637,11 +726,107 @@ class MedicineIntakeWorkflow {
 		}
 	}
 
+	async persistAsync(): Promise<void> {
+		if (this._status === 'idle' || this._status === 'complete') return;
+		if (this.persistTimeout) {
+			clearTimeout(this.persistTimeout);
+			this.persistTimeout = null;
+		}
+		await this.persistSnapshot();
+	}
+
+	private async persistSnapshot(overrides: { queuedScans?: MedicineQueuedScan[] } = {}): Promise<void> {
+		this.persistChain = this.persistChain
+			.catch(() => undefined)
+			.then(() => this.doPersist(overrides));
+		await this.persistChain;
+	}
+
+	private async doPersist(overrides: { queuedScans?: MedicineQueuedScan[] } = {}): Promise<void> {
+		try {
+			const now = Date.now();
+			if (this.persistedCreatedAt === null) this.persistedCreatedAt = now;
+			if (this.persistedSessionId === null) this.persistedSessionId = createId('stored_medicine');
+			const photos = await Promise.all(this._photos.map(medicineMissionPersistence.serializePhoto));
+			const queuedScans = overrides.queuedScans ?? this._queuedScans;
+			await medicineMissionPersistence.save({
+				id: this.persistedSessionId,
+				createdAt: this.persistedCreatedAt,
+				updatedAt: now,
+				missionId: this.missionId,
+				status: this._status === 'analyzing' ? 'capturing' : this._status,
+				locationId: this._locationId,
+				locationName: this._locationName,
+				locationPath: this._locationPath,
+				startedAtMs: this._startedAtMs,
+				photos,
+				note: this._note,
+				barcodeText: this._barcodeText,
+				expiryDate: this._expiryDate,
+				openedDate: this._openedDate,
+				remainingDoses: this._remainingDoses,
+				remainingDoseLabel: this._remainingDoseLabel,
+				candidate: medicineMissionPersistence.serializeCandidate(this._candidate),
+				queuedScans: medicineMissionPersistence.serializeQueuedScans(queuedScans),
+				activeQueueId: this._activeQueueId,
+				warnings: this._warnings,
+				error: this._error,
+			});
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			log.warn(`Medicine mission persistence failed: ${message}`);
+		}
+	}
+
+	async recover(): Promise<boolean> {
+		const session = await medicineMissionPersistence.load();
+		if (!session) return false;
+		for (const photo of this._photos) safeRevoke(photo.previewUrl);
+		const photos = await Promise.all(session.photos.map(medicineMissionPersistence.deserializePhoto));
+		this.missionId = session.missionId;
+		this._status =
+			session.status === 'analyzing' || session.status === 'submitting' ? 'capturing' : session.status;
+		this._locationId = session.locationId;
+		this._locationName = session.locationName;
+		this._locationPath = session.locationPath;
+		this._startedAtMs = session.startedAtMs ?? Date.now();
+		this._photos = photos;
+		this._note = session.note;
+		this._barcodeText = session.barcodeText;
+		this._expiryDate = session.expiryDate;
+		this._openedDate = session.openedDate;
+		this._remainingDoses = session.remainingDoses;
+		this._remainingDoseLabel = session.remainingDoseLabel;
+		this._candidate = medicineMissionPersistence.deserializeCandidate(session.candidate, photos);
+		this._queuedScans = medicineMissionPersistence.deserializeQueuedScans(session.queuedScans, photos);
+		this._activeQueueId = session.activeQueueId;
+		this._warnings = session.warnings;
+		this._error = session.error;
+		this._analysisProgress = null;
+		this._submissionProgress = null;
+		this.persistedCreatedAt = session.createdAt;
+		this.persistedSessionId = session.id;
+		void this.processQueuedScans();
+		return true;
+	}
+
+	async hasRecoverableMission(): Promise<boolean> {
+		return medicineMissionPersistence.hasRecoverableMission();
+	}
+
+	async clearPersistedMission(): Promise<void> {
+		await medicineMissionPersistence.clear();
+	}
+
 	cancelAnalysis(): void {
 		this.abortController?.abort();
 	}
 
 	reset(): void {
+		if (this.persistTimeout) {
+			clearTimeout(this.persistTimeout);
+			this.persistTimeout = null;
+		}
 		for (const photo of this._photos) safeRevoke(photo.previewUrl);
 		this._status = 'idle';
 		this._locationId = null;
@@ -663,6 +848,9 @@ class MedicineIntakeWorkflow {
 		this._submissionProgress = null;
 		this._error = null;
 		this._warnings = [];
+		this.persistedCreatedAt = null;
+		this.persistedSessionId = null;
+		void this.clearPersistedMission();
 	}
 
 	private startNextAtSameLocation(): void {
