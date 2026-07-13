@@ -331,7 +331,12 @@ export type MedicineIntakeStatus =
 	| 'submitting'
 	| 'complete';
 
-export type MedicineMissionKind = 'medicine_intake' | 'room_sweep' | 'single_item' | 'pack_travel' | 'find_homebox';
+export type MedicineMissionKind =
+	| 'medicine_intake'
+	| 'room_sweep'
+	| 'single_item'
+	| 'pack_travel'
+	| 'find_homebox';
 
 export type MedicineCandidateState =
 	| 'captured'

@@ -180,7 +180,7 @@ async def get_medicine(homebox_item_id: str, client=Depends(get_client), token: 
     item = await client.get_item(token, homebox_item_id)
     tag_ids = {str(tag.get("id")) for tag in item.get("tags", [])}
     tag = await find_medicine_tag(client, token)
-    if str(tag.get("id")) not in tag_ids:
+    if not tag or str(tag.get("id")) not in tag_ids:
         raise HTTPException(status_code=404, detail="Medicine item not found")
     return _catalog_item(item)
 

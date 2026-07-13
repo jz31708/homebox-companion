@@ -103,20 +103,21 @@ export const medicines = {
 				remaining_level: candidate.remainingDoseLabel || 'unknown',
 				location_id: locationId,
 				user_note: candidate.notes || null,
-				reference: candidate.databaseMatch?.cis && candidate.officialPageUrl && candidate.noticeUrl
-					? {
-							cip13: candidate.databaseMatch.cip13 || candidate.cip13,
-							cis: candidate.databaseMatch.cis,
-							name: candidate.name,
-							pharmaceutical_form: candidate.form,
-							presentation: candidate.packageSize,
-							active_substances: candidate.databaseMatch.activeSubstances || [],
-							official_page_url: candidate.officialPageUrl,
-							notice_url: candidate.noticeUrl,
-							rcp_url: candidate.rcpUrl,
-							source_name: 'Base de Données Publique des Médicaments',
-						}
-					: null,
+				reference:
+					candidate.databaseMatch?.cis && candidate.officialPageUrl && candidate.noticeUrl
+						? {
+								cip13: candidate.databaseMatch.cip13 || candidate.cip13,
+								cis: candidate.databaseMatch.cis,
+								name: candidate.name,
+								pharmaceutical_form: candidate.form,
+								presentation: candidate.packageSize,
+								active_substances: candidate.databaseMatch.activeSubstances || [],
+								official_page_url: candidate.officialPageUrl,
+								notice_url: candidate.noticeUrl,
+								rcp_url: candidate.rcpUrl,
+								source_name: 'Base de Données Publique des Médicaments',
+							}
+						: null,
 			})
 		);
 		for (const photo of photos) form.append('photos', photo);

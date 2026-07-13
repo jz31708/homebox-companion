@@ -58,15 +58,17 @@
 			/>{/if}
 		<section class="space-y-3 rounded-xl border border-neutral-800 bg-neutral-900 p-4">
 			<h2 class="font-semibold text-neutral-100">Official notice</h2>
+			<!-- eslint-disable svelte/no-navigation-without-resolve -->
 			{#if item.official_notice_url}<a
 					class="block text-primary-300"
 					href={item.official_notice_url}
 					target="_blank"
 					rel="noreferrer">Open official notice</a
 				>{:else}<p class="text-neutral-400">Notice unavailable</p>{/if}
+			<!-- eslint-enable svelte/no-navigation-without-resolve -->
 			{#if item.notice_attachment_url}<a
 					class="block text-primary-300"
-					href={item.notice_attachment_url}
+					href={resolve(item.notice_attachment_url as any)}
 					target="_blank"
 					rel="noreferrer">Open attached PDF</a
 				>{:else if item.cis}<button

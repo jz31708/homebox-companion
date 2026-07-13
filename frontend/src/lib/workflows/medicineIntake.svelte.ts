@@ -618,12 +618,12 @@ class MedicineIntakeWorkflow {
 						? {
 								candidate: candidateFromReference(local.reference, {
 									id: createId('medicine'),
-								expiryDate: input.expiryDate,
+									expiryDate: input.expiryDate,
 									openedDate: input.openedDate,
 									remainingDoses: input.remainingDoses,
-										remainingDoseLabel: input.remainingDoseLabel,
-										note: input.note,
-								photoIds: input.photoIds,
+									remainingDoseLabel: input.remainingDoseLabel,
+									note: input.note,
+									photoIds: input.photoIds,
 								}),
 								warnings: local.warnings,
 							}

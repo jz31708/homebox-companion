@@ -5,6 +5,7 @@ import re
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from io import BytesIO
+from typing import Any
 
 import httpx
 from reportlab.lib.enums import TA_CENTER
@@ -27,7 +28,8 @@ class _NoticeParser(HTMLParser):
         self._mode = "paragraph"
         self._buffer: list[str] = []
 
-    def handle_starttag(self, tag, _attrs):
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        del attrs
         if tag in {"script", "style", "nav", "header", "footer"}:
             self._skip += 1
         elif tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
@@ -94,7 +96,7 @@ async def fetch_official_notice(cis: str) -> NoticeDocument:
         sections = [NoticeSection(heading="Notice", paragraphs=parser.parts)]
     short_purpose = indications.group(1).strip() if indications else None
     if indications:
-        sections.insert(0, NoticeSection(heading="From official notice", paragraphs=[short_purpose]))
+        sections.insert(0, NoticeSection(heading="From official notice", paragraphs=[short_purpose or ""]))
     return NoticeDocument(
         cis=cis,
         source_url=str(response.url),
@@ -114,7 +116,7 @@ def render_notice_pdf(document: NoticeDocument) -> bytes:
     heading = ParagraphStyle('NoticeHeading', parent=styles['Heading2'], spaceBefore=10, spaceAfter=5)
     body = ParagraphStyle('NoticeBody', parent=styles['BodyText'], leading=14, spaceAfter=6)
     small = ParagraphStyle('NoticeSmall', parent=styles['BodyText'], fontSize=8, leading=10, textColor='#555555')
-    story = [Paragraph(document.title, title), Paragraph(f'CIS: {document.cis}', small),
+    story: list[Any] = [Paragraph(document.title, title), Paragraph(f'CIS: {document.cis}', small),
              Paragraph(f'Source: {document.source_url}', small),
              Paragraph(f'Retrieved: {document.retrieved_at.isoformat()}', small),
              Paragraph('This document reproduces information from the live official source.', small), Spacer(1, 8)]
