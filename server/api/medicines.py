@@ -35,10 +35,36 @@ def store() -> ReferenceStore:
 
 
 def _custom_fields(item: dict[str, Any]) -> dict[str, str]:
-    fields = item.get("customFields") or item.get("custom_fields") or {}
+    fields = item.get("fields") or item.get("customFields") or item.get("custom_fields") or {}
     if isinstance(fields, list):
-        return {str(field.get("name")): str(field.get("value", "")) for field in fields if field.get("name")}
+        result: dict[str, str] = {}
+        for field in fields:
+            name = field.get("name")
+            if not name:
+                continue
+            value = field.get("textValue")
+            if value in (None, ""):
+                value = field.get("numberValue")
+            if value in (None, ""):
+                value = field.get("booleanValue")
+            if value not in (None, ""):
+                result[str(name)] = str(value)
+        return result
     return {str(key): str(value) for key, value in fields.items() if value not in (None, "")}
+
+
+def _field_payload(fields: dict[str, str]) -> list[dict[str, str]]:
+    return [{"type": "text", "name": key, "textValue": value} for key, value in fields.items() if value]
+
+
+def _medicine_item_payload(medicine: MedicineDraft, tag_id: str) -> dict[str, Any]:
+    return {
+        "name": medicine.display_name.strip(),
+        "quantity": 1,
+        "description": "",
+        "parentId": medicine.location_id,
+        "tagIds": [str(tag_id)],
+    }
 
 
 def _field(fields: dict[str, str], name: str) -> str | None:
@@ -65,10 +91,16 @@ def _catalog_item(item: dict[str, Any]) -> MedicineCatalogItem:
         expiry_date=expiry,
         expiry_state=state,
         days_until_expiry=days,
-        location_id=(item.get("location") or {}).get("id") or item.get("locationId"),
+        location_id=(item.get("location") or item.get("parent") or {}).get("id")
+        or item.get("locationId")
+        or item.get("parentId"),
         cip13=_field(fields, "Medicine CIP13"),
         cis=_field(fields, "Medicine CIS"),
-        package_photo_url=(f"/api/items/{item['id']}/attachments/{photo.get('id')}" if photo else None),
+        package_photo_url=(
+            f"/api/items/{item['id']}/attachments/{photo.get('id')}"
+            if photo
+            else (f"/api/items/{item['id']}/attachments/{item['imageId']}" if item.get("imageId") else None)
+        ),
         official_notice_url=_field(fields, "Official notice"),
         notice_attachment_url=(f"/api/items/{item['id']}/attachments/{notice.get('id')}" if notice else None),
         remaining_level=_field(fields, "Remaining level"),
@@ -171,13 +203,7 @@ async def create_medicine(
     item = await client.create_item(
         token,
         ItemCreate.model_validate(
-            {
-                "name": medicine.display_name.strip(),
-                "quantity": 1,
-                "description": "",
-                "locationId": medicine.location_id,
-                "tagIds": [str(tag["id"])],
-            }
+                _medicine_item_payload(medicine, str(tag["id"]))
         ),
     )
     item_id = str(item["id"])
@@ -187,10 +213,10 @@ async def create_medicine(
             "name": medicine.display_name.strip(),
             "description": "",
             "quantity": 1,
-            "locationId": medicine.location_id,
+            "parentId": medicine.location_id,
             "tagIds": [str(tag["id"])],
             "notes": medicine.user_note,
-            "customFields": fields,
+            "fields": _field_payload(fields),
         }
         await client.update_item(
             token,
@@ -231,7 +257,7 @@ async def create_medicine(
             await client.update_item(
                 token,
                 item_id,
-                {"customFields": {key: value for key, value in fields.items() if value}},
+                {"fields": _field_payload(fields)},
             )
         except Exception as error:
             warnings.append(f"Notice snapshot queued for retry: {type(error).__name__}")
@@ -261,7 +287,7 @@ async def refresh_notice(homebox_item_id: str, client=Depends(get_client), token
     )
     fields["Notice snapshot retrieved at"] = document.retrieved_at.isoformat()
     fields["Notice snapshot checksum"] = document.sha256 or ""
-    await client.update_item(token, homebox_item_id, {"customFields": fields})
+    await client.update_item(token, homebox_item_id, {"fields": _field_payload(fields)})
     return {"ok": True, "checksum": document.sha256}
 
 

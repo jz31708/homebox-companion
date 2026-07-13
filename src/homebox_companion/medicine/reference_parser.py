@@ -6,12 +6,26 @@ import json
 from collections.abc import Iterable
 
 
+def _repair_mojibake(text: str) -> str:
+    """Repair a UTF-8 payload that was incorrectly decoded as Latin-1."""
+    markers = ("Ã", "Â", "â€", "�")
+    before = sum(text.count(marker) for marker in markers)
+    if not before:
+        return text
+    try:
+        candidate = text.encode("latin1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return text
+    after = sum(candidate.count(marker) for marker in markers)
+    return candidate if after < before else text
+
+
 def decode_official(data: bytes) -> str:
     if data.startswith(b"\xef\xbb\xbf"):
         data = data[3:]
     for encoding in ("utf-8", "cp1252", "iso-8859-1"):
         try:
-            return data.decode(encoding)
+            return _repair_mojibake(data.decode(encoding))
         except UnicodeDecodeError:
             continue
     raise UnicodeDecodeError("unknown", data, 0, len(data), "BDPM file is not decodable")
