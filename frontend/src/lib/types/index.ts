@@ -11,6 +11,15 @@
 // DOMAIN MODELS
 // =============================================================================
 
+/** Homebox group (collection) - the multi-tenancy unit */
+export interface Group {
+	id: string;
+	name: string;
+	currency: string;
+	createdAt?: string;
+	updatedAt?: string;
+}
+
 /** Location in Homebox hierarchy */
 export interface Location {
 	id: string;
@@ -204,6 +213,229 @@ export interface ScanState {
 	submissionErrors: string[];
 	// Error handling
 	error: string | null;
+}
+
+// =============================================================================
+// WORKFLOW TYPES - Bulk Sweep Flow
+// =============================================================================
+
+export type BulkTranscriptSource = 'none' | 'live' | 'server' | 'manual' | 'mixed';
+export type BulkTranscriptStatus = 'pending' | 'transcribing' | 'done' | 'failed';
+export type BulkCandidateStatus = 'pending' | 'accepted' | 'rejected' | 'needs_review';
+
+export type BulkSweepStatus =
+	| 'idle'
+	| 'capturing'
+	| 'transcript_review'
+	| 'analyzing'
+	| 'reviewing'
+	| 'submitting'
+	| 'complete';
+
+export interface BulkCapturedPhoto {
+	id: string;
+	file: File;
+	previewUrl: string;
+	takenAtMs: number;
+	sessionOffsetMs: number;
+	note: string;
+	groupLabel: string;
+	ignored: boolean;
+}
+
+export interface BulkAudioSegment {
+	id: string;
+	file: Blob;
+	mimeType: string;
+	startedAtMs: number;
+	endedAtMs: number;
+	transcript?: string;
+	rawTranscript?: string;
+	transcriptStatus: BulkTranscriptStatus;
+}
+
+export interface BulkTranscriptSpan {
+	id: string;
+	text: string;
+	startMs?: number;
+	endMs?: number;
+	sourceAudioSegmentId?: string;
+}
+
+export interface BulkEvidenceRef {
+	photoId?: string;
+	photoIndex?: number;
+	transcriptSpanId?: string;
+	quote?: string;
+	reason?: string;
+}
+
+export interface BulkCandidateItem extends ItemCore, ItemExtended {
+	id: string;
+	custom_fields?: Record<string, string> | null;
+	confidence: number;
+	status: BulkCandidateStatus;
+	evidence: BulkEvidenceRef[];
+	sourcePhotoIds: string[];
+	uncertaintyReasons: string[];
+	duplicateCandidateIds: string[];
+	duplicateExistingItemId?: string | null;
+	suggestedAction: 'accept' | 'review' | 'reject' | 'merge';
+	originalFiles?: File[];
+	compressedDataUrls?: string[];
+}
+
+export interface BulkAnalysisStats {
+	photo_count: number;
+	ignored_photo_count: number;
+	candidate_count: number;
+	low_confidence_count: number;
+}
+
+export interface BulkDetectResponse {
+	candidates: BulkCandidateItem[];
+	warnings: string[];
+	stats: BulkAnalysisStats;
+}
+
+export interface BulkSweepState {
+	status: BulkSweepStatus;
+	locationId: string | null;
+	locationName: string | null;
+	locationPath: string | null;
+	parentItemId: string | null;
+	parentItemName: string | null;
+	startedAtMs: number | null;
+	photos: BulkCapturedPhoto[];
+	audioSegments: BulkAudioSegment[];
+	transcriptSpans: BulkTranscriptSpan[];
+	rawTranscriptText: string;
+	interimTranscriptText: string;
+	editedTranscriptText: string;
+	transcriptEdited: boolean;
+	transcriptSource: BulkTranscriptSource;
+	candidates: BulkCandidateItem[];
+	analysisProgress: Progress | null;
+	submissionProgress: Progress | null;
+	error: string | null;
+	warnings: string[];
+	stats: BulkAnalysisStats | null;
+}
+
+export type MedicinePhotoKind = 'front' | 'barcode' | 'expiry' | 'doses' | 'notice' | 'other';
+export type MedicineIntakeStatus =
+	| 'idle'
+	| 'capturing'
+	| 'analyzing'
+	| 'reviewing'
+	| 'submitting'
+	| 'complete';
+
+export type MedicineMissionKind = 'medicine_intake' | 'room_sweep' | 'single_item' | 'pack_travel' | 'find_homebox';
+
+export type MedicineCandidateState =
+	| 'captured'
+	| 'analyzing'
+	| 'needs_review'
+	| 'blocked'
+	| 'ready'
+	| 'submitted'
+	| 'failed'
+	| 'recovered';
+
+export interface MedicineCapturedPhoto extends BulkCapturedPhoto {
+	kind: MedicinePhotoKind;
+}
+
+export interface MedicineDatabaseMatch {
+	source: 'bdpm' | 'api-medicaments-fr' | 'manual' | 'none';
+	query?: string | null;
+	cis?: string | null;
+	cip13?: string | null;
+	denomination?: string | null;
+	form?: string | null;
+	activeSubstances?: string[];
+	generalUse?: string | null;
+	officialPageUrl?: string | null;
+	noticeUrl?: string | null;
+	rcpUrl?: string | null;
+	confidence: number;
+	raw?: unknown;
+}
+
+export interface MedicineCandidate extends ItemCore, ItemExtended {
+	id: string;
+	activeIngredient?: string | null;
+	strength?: string | null;
+	form?: string | null;
+	packageSize?: string | null;
+	expiryDate?: string | null;
+	openedDate?: string | null;
+	remainingDoses?: number | null;
+	remainingDoseLabel?: 'full' | 'half' | 'low' | 'empty' | 'unknown' | null;
+	storage?: string | null;
+	cip13?: string | null;
+	cis?: string | null;
+	generalUse?: string | null;
+	officialPageUrl?: string | null;
+	noticeUrl?: string | null;
+	rcpUrl?: string | null;
+	confidence: number;
+	uncertaintyReasons: string[];
+	databaseMatch?: MedicineDatabaseMatch | null;
+	sourcePhotoIds: string[];
+	custom_fields?: Record<string, string> | null;
+	originalFiles?: File[];
+}
+
+export interface MedicineDetectResponse {
+	candidate: MedicineCandidate;
+	warnings: string[];
+}
+
+export interface MedicineQueuedScan {
+	id: string;
+	missionId: string;
+	missionKind: MedicineMissionKind;
+	code: string;
+	status: MedicineCandidateState;
+	createdAtMs: number;
+	updatedAtMs: number;
+	selectedLocationId: string | null;
+	selectedLocationPath: string | null;
+	evidencePhotoIds: string[];
+	userNote: string;
+	aiSummary?: string | null;
+	correctionHistory: Array<{ atMs: number; fields: string[] }>;
+	confidence: number | null;
+	blockerReasons: string[];
+	duplicateSuspicions: string[];
+	homeboxPayloadPreview?: BatchCreateRequest | null;
+	candidate?: MedicineCandidate | null;
+	error?: string | null;
+	warnings?: string[];
+}
+
+export interface MedicineIntakeState {
+	status: MedicineIntakeStatus;
+	locationId: string | null;
+	locationName: string | null;
+	locationPath: string | null;
+	startedAtMs: number | null;
+	photos: MedicineCapturedPhoto[];
+	note: string;
+	barcodeText: string;
+	expiryDate: string;
+	openedDate: string;
+	remainingDoses: number | null;
+	remainingDoseLabel: 'full' | 'half' | 'low' | 'empty' | 'unknown';
+	candidate: MedicineCandidate | null;
+	queuedScans: MedicineQueuedScan[];
+	activeQueueId: string | null;
+	error: string | null;
+	warnings: string[];
+	analysisProgress: Progress | null;
+	submissionProgress: Progress | null;
 }
 
 // =============================================================================

@@ -11,6 +11,11 @@ import type {
 	MergedItemResponse,
 	CorrectionResponse,
 	MergeItem,
+	BulkCapturedPhoto,
+	BulkDetectResponse,
+	BulkTranscriptSpan,
+	MedicineCapturedPhoto,
+	MedicineDetectResponse,
 } from '../types';
 
 export interface DetectOptions {
@@ -31,6 +36,48 @@ export interface MergeOptions {
 
 export interface CorrectOptions {
 	signal?: AbortSignal;
+}
+
+export interface BulkDetectOptions {
+	signal?: AbortSignal;
+}
+
+export interface BulkDetectInput {
+	photos: BulkCapturedPhoto[];
+	allPhotos: BulkCapturedPhoto[];
+	locationId: string | null;
+	locationName: string | null;
+	locationPath: string | null;
+	parentItemId: string | null;
+	editedTranscript: string;
+	transcriptSpans: BulkTranscriptSpan[];
+}
+
+export interface MedicineDetectOptions {
+	signal?: AbortSignal;
+}
+
+export interface MedicineDetectInput {
+	photos: MedicineCapturedPhoto[];
+	allPhotos: MedicineCapturedPhoto[];
+	locationId: string | null;
+	locationName: string | null;
+	locationPath: string | null;
+	note: string;
+	barcodeText: string;
+	expiryDate: string;
+	openedDate: string;
+	remainingDoses: number | null;
+	remainingDoseLabel: 'full' | 'half' | 'low' | 'empty' | 'unknown';
+}
+
+export interface MedicineLookupInput {
+	barcodeText: string;
+	note: string;
+	expiryDate: string;
+	openedDate: string;
+	remainingDoses: number | null;
+	remainingDoseLabel: 'full' | 'half' | 'low' | 'empty' | 'unknown';
 }
 
 /**
@@ -168,6 +215,112 @@ export const vision = {
 			errorMessage: 'Correction failed',
 			signal: options.signal,
 			headers,
+		});
+	},
+
+	bulkDetect: async (
+		input: BulkDetectInput,
+		options: BulkDetectOptions = {}
+	): Promise<BulkDetectResponse> => {
+		const formData = new FormData();
+		for (const photo of input.photos) {
+			formData.append('images', photo.file);
+		}
+		formData.append(
+			'session_meta',
+			JSON.stringify({
+				locationId: input.locationId,
+				locationName: input.locationName,
+				locationPath: input.locationPath,
+				parentItemId: input.parentItemId,
+				photos: input.allPhotos.map((photo, index) => ({
+					id: photo.id,
+					index,
+					takenAtMs: photo.takenAtMs,
+					sessionOffsetMs: photo.sessionOffsetMs,
+					note: photo.note,
+					groupLabel: photo.groupLabel,
+					ignored: photo.ignored,
+				})),
+			})
+		);
+		formData.append('edited_transcript', input.editedTranscript);
+		formData.append('transcript_spans', JSON.stringify(input.transcriptSpans));
+		formData.append(
+			'options',
+			JSON.stringify({
+				extractExtendedFields: true,
+				includeLowConfidence: true,
+			})
+		);
+
+		const headers = await buildVisionHeaders();
+		return requestFormData<BulkDetectResponse>('/tools/vision/bulk-detect', formData, {
+			errorMessage: 'Bulk analysis failed',
+			signal: options.signal,
+			headers,
+			timeout: 180_000,
+		});
+	},
+
+	medicineDetect: async (
+		input: MedicineDetectInput,
+		options: MedicineDetectOptions = {}
+	): Promise<MedicineDetectResponse> => {
+		const formData = new FormData();
+		for (const photo of input.photos) {
+			formData.append('images', photo.file);
+		}
+		formData.append(
+			'session_meta',
+			JSON.stringify({
+				locationId: input.locationId,
+				locationName: input.locationName,
+				locationPath: input.locationPath,
+				photos: input.allPhotos.map((photo, index) => ({
+					id: photo.id,
+					index,
+					kind: photo.kind,
+					takenAtMs: photo.takenAtMs,
+					sessionOffsetMs: photo.sessionOffsetMs,
+					note: photo.note,
+					groupLabel: photo.groupLabel,
+					ignored: photo.ignored,
+				})),
+			})
+		);
+		formData.append(
+			'user_context',
+			JSON.stringify({
+				note: input.note,
+				barcodeText: input.barcodeText,
+				expiryDate: input.expiryDate,
+				openedDate: input.openedDate,
+				remainingDoses: input.remainingDoses,
+				remainingDoseLabel: input.remainingDoseLabel,
+			})
+		);
+
+		const headers = await buildVisionHeaders();
+		return requestFormData<MedicineDetectResponse>('/tools/vision/medicine-detect', formData, {
+			errorMessage: 'Medicine analysis failed',
+			signal: options.signal,
+			headers,
+			timeout: 180_000,
+		});
+	},
+
+	medicineLookup: async (
+		input: MedicineLookupInput,
+		options: MedicineDetectOptions = {}
+	): Promise<MedicineDetectResponse> => {
+		const headers = await buildVisionHeaders();
+		return request<MedicineDetectResponse>('/tools/vision/medicine-lookup', {
+			method: 'POST',
+			body: JSON.stringify(input),
+			signal: options.signal,
+			headers,
+			timeout: 60_000,
 		});
 	},
 };

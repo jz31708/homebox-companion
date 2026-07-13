@@ -50,6 +50,13 @@ export function getScanHref(workflowStatus: string): string {
 export function getNavItems(scanHref: string, isDemoModeExplicit: boolean): NavItem[] {
 	return [
 		{
+			id: 'medicines',
+			label: 'Medicines',
+			href: '/medicines',
+			icon: 'scan',
+			activeRoutes: ['/medicines'],
+		},
+		{
 			id: 'chat',
 			label: 'Chat',
 			href: '/chat',

@@ -158,7 +158,7 @@
 			showToast('Please select a location', 'warning');
 			return;
 		}
-		goto(resolve('/capture'));
+		goto(resolve('/mode'));
 	}
 
 	function openCreateModal(parent: { id: string; name: string } | null = null) {

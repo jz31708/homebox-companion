@@ -111,6 +111,13 @@ Open `http://localhost:8000` in your browser.
 
 ## ✨ Features
 
+### Medicine Cabinet V1
+
+Scan medicine barcodes, capture package photos, resolve official French BDPM
+reference data from a local SQLite index, record physical expiry dates, save
+expired/unknown/unmatched boxes, attach official notice PDFs when available, and
+browse the cabinet by expiry state. See [Medicine Cabinet V1](docs/medicine-cabinet-v1.md).
+
 ### AI-Powered Detection
 - Identifies multiple items in a single photo
 - Extracts manufacturer, model, serial number, price when visible

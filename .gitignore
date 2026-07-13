@@ -54,6 +54,8 @@ frontend/stats.html
 
 # Test/audit artifacts
 test_results.txt
+frontend/playwright-report/
+frontend/test-results/
 security_audit*.txt
 config/field_preferences.json
 HOMEBOX_LABELMAKER_API.md
@@ -61,3 +63,4 @@ tests/label_print/
 
 # Antigravity
 .gemini/
+diff_*.txt

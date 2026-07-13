@@ -1,0 +1,23 @@
+services:
+  homebox-companion:
+    build: .
+    container_name: homebox-companion-bulk
+    restart: unless-stopped
+    environment:
+      HBC_HOMEBOX_URL: http://homebox:7745
+      HBC_LLM_API_KEY: ${AI_PROXY_KEY}
+      HBC_LLM_API_BASE: ${AI_PROXY_BASE:-http://192.168.1.248:8880/v1}
+      HBC_LLM_MODEL: ${AI_MODEL:-ai-node}
+      HBC_LLM_ALLOW_UNSAFE_MODELS: "true"
+      HBC_BULK_ENABLED: "true"
+      HBC_BULK_MAX_IMAGES: "120"
+      HBC_BULK_VISION_CHUNK_SIZE: "8"
+      HBC_BULK_MAX_TRANSCRIPT_CHARS: "20000"
+      HBC_BULK_MAX_ATTACHMENTS_PER_ITEM: "4"
+      HBC_AUDIO_TRANSCRIPTION_ENABLED: "true"
+      HBC_AUDIO_TRANSCRIPTION_MODEL: ${AUDIO_MODEL:-whisper-1}
+      HBC_CORS_ORIGINS: ${HBC_CORS_ORIGINS:-http://localhost:8000}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data

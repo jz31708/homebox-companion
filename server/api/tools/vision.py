@@ -20,12 +20,27 @@ from homebox_companion import (
 from homebox_companion import (
     correct_item as llm_correct_item,
 )
+from homebox_companion.tools.vision.bulk_detector import detect_bulk_sweep
+from homebox_companion.tools.vision.bulk_models import (
+    BulkDetectResponse,
+    BulkPhotoMeta,
+    BulkStats,
+    BulkTranscriptSpan,
+)
+from homebox_companion.tools.vision.medicine_detector import detect_medicine, lookup_medicine_barcode
+from homebox_companion.tools.vision.medicine_models import (
+    MedicineDetectResponse,
+    MedicineLookupRequest,
+    MedicinePhotoMeta,
+    MedicineUserContext,
+)
 from homebox_companion.tools.vision.models import get_custom_fields_dict
 
 from ...dependencies import (
     VisionContext,
     get_client,
     get_vision_context,
+    require_auth,
     require_llm_configured,
     validate_file_size,
     validate_files_size,
@@ -296,6 +311,137 @@ async def analyze_item_advanced(
 
 # Maximum length for correction instructions to prevent abuse
 MAX_CORRECTION_INSTRUCTIONS_LENGTH = 2000
+
+
+@router.post("/bulk-detect", response_model=BulkDetectResponse)
+async def bulk_detect(
+    images: Annotated[list[UploadFile], File(description="Bulk Sweep photos")],
+    session_meta: Annotated[str, Form(description="JSON session metadata")],
+    transcript_spans: Annotated[str, Form(description="JSON transcript spans")] = "[]",
+    edited_transcript: Annotated[str, Form(description="User-edited canonical transcript")] = "",
+    options: Annotated[str, Form(description="JSON analysis options")] = "{}",
+    ctx: Annotated[VisionContext, Depends(get_vision_context)] = None,  # type: ignore[assignment]
+    api_key: Annotated[str, Depends(require_llm_configured)] = "",  # noqa: ARG001
+) -> BulkDetectResponse:
+    """Analyze a Bulk Sweep into evidence-backed candidate items."""
+    if not images:
+        raise HTTPException(status_code=400, detail="At least one image is required")
+
+    try:
+        meta = json.loads(session_meta)
+        options_data = json.loads(options or "{}")
+        span_data = json.loads(transcript_spans or "[]")
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail="Invalid Bulk Sweep JSON metadata") from e
+
+    photo_meta_all = [BulkPhotoMeta.model_validate(photo) for photo in meta.get("photos", [])]
+    active_meta = [photo for photo in photo_meta_all if not photo.ignored]
+    spans = [BulkTranscriptSpan.model_validate(span) for span in span_data]
+
+    if len(images) != len(active_meta):
+        # The frontend sends only non-ignored photos. Keep the request strict so evidence IDs stay aligned.
+        raise HTTPException(status_code=400, detail="Image count does not match non-ignored photo metadata")
+
+    validated_images = await validate_files_size(images)
+    image_data = [
+        (photo, image_bytes, mime_type)
+        for photo, (image_bytes, mime_type) in zip(active_meta, validated_images, strict=True)
+    ]
+
+    chunk_size = int(options_data.get("chunkSize") or settings.bulk_vision_chunk_size)
+    logger.info(
+        "Bulk Sweep detection: photos={}, ignored={}, transcript_chars={}",
+        len(active_meta),
+        len(photo_meta_all) - len(active_meta),
+        len(edited_transcript or ""),
+    )
+
+    candidates = await detect_bulk_sweep(
+        image_data,
+        transcript_spans=spans,
+        edited_transcript=(edited_transcript or "")[: settings.bulk_max_transcript_chars],
+        tags=ctx.tags,
+        field_preferences=ctx.field_preferences,
+        output_language=ctx.output_language,
+        custom_fields=ctx.custom_fields,
+        chunk_size=chunk_size,
+    )
+    low_confidence = sum(1 for candidate in candidates if candidate.confidence < settings.bulk_low_confidence_threshold)
+    return BulkDetectResponse(
+        candidates=candidates,
+        warnings=[],
+        stats=BulkStats(
+            photo_count=len(active_meta),
+            ignored_photo_count=len(photo_meta_all) - len(active_meta),
+            candidate_count=len(candidates),
+            low_confidence_count=low_confidence,
+        ),
+    )
+
+
+@router.post("/medicine-detect", response_model=MedicineDetectResponse)
+async def medicine_detect(
+    images: Annotated[list[UploadFile], File(description="Medicine photos")],
+    session_meta: Annotated[str, Form(description="JSON session metadata")],
+    user_context: Annotated[str, Form(description="JSON medicine hints")] = "{}",
+    ctx: Annotated[VisionContext, Depends(get_vision_context)] = None,  # type: ignore[assignment]
+    api_key: Annotated[str, Depends(require_llm_configured)] = "",  # noqa: ARG001
+) -> MedicineDetectResponse:
+    """Analyze several photos of one medicine into a reviewable Homebox item."""
+    if not images:
+        raise HTTPException(status_code=400, detail="At least one image is required")
+
+    try:
+        meta = json.loads(session_meta)
+        context_data = json.loads(user_context or "{}")
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail="Invalid medicine intake JSON metadata") from e
+
+    photo_meta_all = [MedicinePhotoMeta.model_validate(photo) for photo in meta.get("photos", [])]
+    active_meta = [photo for photo in photo_meta_all if not photo.ignored]
+    if len(images) != len(active_meta):
+        raise HTTPException(status_code=400, detail="Image count does not match non-ignored photo metadata")
+
+    context = MedicineUserContext.model_validate(context_data)
+    validated_images = await validate_files_size(images)
+    image_data = [
+        (photo, image_bytes, mime_type)
+        for photo, (image_bytes, mime_type) in zip(active_meta, validated_images, strict=True)
+    ]
+    logger.info(
+        "Medicine detection: photos={}, ignored={}, code_present={}",
+        len(active_meta),
+        len(photo_meta_all) - len(active_meta),
+        bool(context.barcodeText),
+    )
+
+    candidate = await detect_medicine(
+        image_data,
+        context=context,
+        output_language=ctx.output_language,
+    )
+    return MedicineDetectResponse(candidate=candidate, warnings=[])
+
+
+@router.post("/medicine-lookup", response_model=MedicineDetectResponse)
+async def medicine_lookup(
+    request: MedicineLookupRequest,
+    _auth: Annotated[None, Depends(require_auth)] = None,  # noqa: ARG001
+) -> MedicineDetectResponse:
+    """Resolve a scanned medicine barcode into a reviewable candidate without requiring photos."""
+    context = MedicineUserContext(
+        note=request.note,
+        barcodeText=request.barcodeText,
+        expiryDate=request.expiryDate,
+        openedDate=request.openedDate,
+        remainingDoses=request.remainingDoses,
+        remainingDoseLabel=request.remainingDoseLabel,
+    )
+    candidate = await lookup_medicine_barcode(
+        context=context,
+        output_language=None,
+    )
+    return MedicineDetectResponse(candidate=candidate, warnings=[])
 
 
 @router.post("/correct", response_model=CorrectionResponse)
