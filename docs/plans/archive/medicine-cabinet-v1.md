@@ -3,7 +3,7 @@
 ## Workboard handoff
 
 - State: completed
-- Progress: Implemented, regression-tested, merged into fork `main` at `6591c6f`, deployed from that exact merged commit, and verified with isolated authenticated acceptance.
+- Progress: Implemented, regression-tested, merged into fork `main` at `708a237`, deployed from that exact merged commit, and verified with isolated authenticated acceptance.
 - Blocker: none
 - Next: use the cabinet and collect real UX feedback
 - Durable updates: product code, archived plan, homelab-infra runtime overlay, and homelab-docs are committed and pushed; MkDocs is deployed.
@@ -44,7 +44,7 @@ database.
 ## Release evidence
 
 - Fork PR: `jz31708/homebox-companion#2`
-- Merged main commit: `6591c6f`
-- Deployed image digest: `sha256:746dba1da5fc0b6da0d7b0ce9ad701be6363c5984d502fff93db9d668230b808`
+- Merged main commit: `708a237`
+- Deployed image digest: `sha256:aa5547516b56bfd4dab1aba966b73069ffed14b56e091111264d766fe4cfd7de`
 - Runtime: LXC 258, `homebox-companion`, port `8055`
 - Duelion upstream PR is optional and not a blocker.
