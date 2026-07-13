@@ -60,13 +60,13 @@
 			<h2 class="font-semibold text-neutral-100">Official notice</h2>
 			{#if item.official_notice_url}<a
 					class="block text-primary-300"
-				href={resolve(item.official_notice_url as any)}
+					href={item.official_notice_url}
 					target="_blank"
 					rel="noreferrer">Open official notice</a
 				>{:else}<p class="text-neutral-400">Notice unavailable</p>{/if}
 			{#if item.notice_attachment_url}<a
 					class="block text-primary-300"
-				href={resolve(item.notice_attachment_url as any)}
+					href={item.notice_attachment_url}
 					target="_blank"
 					rel="noreferrer">Open attached PDF</a
 				>{:else if item.cis}<button

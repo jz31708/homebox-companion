@@ -401,6 +401,7 @@ export interface MedicineQueuedScan {
 	status: MedicineCandidateState;
 	createdAtMs: number;
 	updatedAtMs: number;
+	inputSnapshot: MedicineDraftInputSnapshot;
 	selectedLocationId: string | null;
 	selectedLocationPath: string | null;
 	evidencePhotoIds: string[];
@@ -414,6 +415,17 @@ export interface MedicineQueuedScan {
 	candidate?: MedicineCandidate | null;
 	error?: string | null;
 	warnings?: string[];
+}
+
+export interface MedicineDraftInputSnapshot {
+	barcodeText: string;
+	expiryDate: string;
+	openedDate: string;
+	remainingDoses: number | null;
+	remainingDoseLabel: 'full' | 'half' | 'low' | 'empty' | 'unknown';
+	note: string;
+	photoIds: string[];
+	capturedAtMs: number;
 }
 
 export interface MedicineIntakeState {
