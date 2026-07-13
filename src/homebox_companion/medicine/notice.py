@@ -21,21 +21,42 @@ class _NoticeParser(HTMLParser):
     def __init__(self):
         super().__init__()
         self.parts: list[str] = []
+        self.blocks: list[tuple[str, str]] = []
         self.title = "Official medicine notice"
         self._skip = 0
+        self._mode = "paragraph"
+        self._buffer: list[str] = []
 
     def handle_starttag(self, tag, _attrs):
         if tag in {"script", "style", "nav", "header", "footer"}:
             self._skip += 1
+        elif tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+            self._flush()
+            self._mode = "heading"
+        elif tag == "li":
+            self._flush()
+            self._mode = "bullet"
+        elif tag in {"p", "div", "br"}:
+            self._flush()
 
     def handle_endtag(self, tag):
         if tag in {"script", "style", "nav", "header", "footer"} and self._skip:
             self._skip -= 1
+        elif tag in {"h1", "h2", "h3", "h4", "h5", "h6", "li", "p", "div"}:
+            self._flush()
+            self._mode = "paragraph"
 
     def handle_data(self, data):
         text = " ".join(data.split())
         if text and not self._skip:
+            self._buffer.append(text)
             self.parts.append(text)
+
+    def _flush(self):
+        text = " ".join(self._buffer).strip()
+        if text:
+            self.blocks.append((self._mode, text))
+        self._buffer = []
 
 
 def sanitize_notice_html(html: str, source_url: str) -> str:
@@ -53,9 +74,24 @@ async def fetch_official_notice(cis: str) -> NoticeDocument:
         response.raise_for_status()
     parser = _NoticeParser()
     parser.feed(response.text)
+    parser._flush()
     text = "\n".join(parser.parts)
     indications = re.search(r"(?:indications|dans quel cas).*?([^.]{20,240}\.)", text, re.IGNORECASE)
-    sections = [NoticeSection(heading="Notice", paragraphs=parser.parts)]
+    sections: list[NoticeSection] = []
+    current = NoticeSection(heading="Notice")
+    for mode, value in parser.blocks:
+        if mode == "heading":
+            if current.paragraphs or current.bullet_lists:
+                sections.append(current)
+            current = NoticeSection(heading=value)
+        elif mode == "bullet":
+            current.bullet_lists.append([value])
+        else:
+            current.paragraphs.append(value)
+    if current.paragraphs or current.bullet_lists:
+        sections.append(current)
+    if not sections:
+        sections = [NoticeSection(heading="Notice", paragraphs=parser.parts)]
     short_purpose = indications.group(1).strip() if indications else None
     if indications:
         sections.insert(0, NoticeSection(heading="From official notice", paragraphs=[short_purpose]))
