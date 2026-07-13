@@ -1,12 +1,79 @@
 # Medicine Cabinet V1.1 completion
 
+## Outcome
+
+V1.1 is implemented on fork `main` at merged commit
+`d5919eb5d6cc98e14a2bbd4c83fc2e4021dab629` and deployed to LXC 258.
+
+## Gaps closed
+
+Immutable scan input snapshots, legacy persistence migration, per-scan photo
+ownership, manual/unmatched saves, unknown and expired dates, structured notice
+sections, readable multipage PDFs, official purpose persistence, side-effect-free
+catalog reads, authenticated locked sync, complete catalog pagination, and direct
+external links are implemented.
+
+## Multi-medicine isolation
+
+Queued scans retain their own dates, remaining values, notes, and photo IDs;
+retry processing reads the queued snapshot rather than the live draft.
+
+## Manual and unmatched medicines
+
+Manual items save without fabricated CIS or official URLs. Official fields are
+only created when a complete official reference is present.
+
+## Official purpose and notice PDF
+
+Official indication text is stored as a concise purpose when available. Notices
+render as wrapped, Unicode-capable, multipage PDFs with source metadata and page
+numbers.
+
+## Complete cabinet browser
+
+The browser loads all catalog pages with deduplication, abort propagation, a
+100-page guard, and direct external official links.
+
+## Validation
+
+- Backend: 209 passed, 35 deselected with workspace-local pytest temp root.
+- Focused medicine tests: 20 passed.
+- Ruff: passed.
+- Frontend svelte-check: 0 errors and 0 warnings.
+- Frontend ESLint: passed.
+- Production build: passed.
+- Existing mobile E2E: 2 passed.
+
+## Live acceptance
+
+Live deployment smoke acceptance passed: the container is healthy and both
+direct and Caddy `/api/version` endpoints return `3.0.2`. Full disposable
+fixture acceptance is the remaining release evidence before declaring the
+Workboard state completed.
+
+## Pull request and deployment
+
+PR #6 was merged into `jz31708/homebox-companion:main`. Deployment used the
+merged main archive, preserved the runtime overlay and `data/`, and rebuilt
+without cache. Image digest:
+`sha256:65949691e32a1df9ec89a3de62b42515c96d55dd4df979369ab721059462ab6d`.
+
+## Documentation
+
+The active plan is ready to archive after disposable acceptance. The optional
+Duelion upstream PR is not a blocker.
+
+## Known limitations
+
+No reminders, dosage/adherence, disposal advice, duplicate merge, image
+scraping, Homebox Ingestion, Bulk Sweep redesign, AI Chat changes, or second
+medicine database were added.
+
 ## Workboard handoff
 
 - State: continuing
-- Progress: V1 is merged and deployed; V1.1 gaps are being closed from fork `main`.
 - Blocker: none
-- Next: implement the binding V1.1 phases in order, validate, merge, deploy, and run disposable acceptance.
-- Durable updates: this active plan will track the V1.1 completion pass.
+- Next: run disposable acceptance and then archive this plan.
 - Safe to archive: no
 
 ## Scope
