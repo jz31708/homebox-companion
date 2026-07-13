@@ -3,9 +3,9 @@
 ## Workboard handoff
 
 - State: continuing
-- Progress: Feature branch reconciled with `origin/main`. Transactional live BDPM import, local lookup, Homebox medicine mapping, package photo/notice attachment, notice retry, V2 IndexedDB preservation, compact capture/review, catalog filters/detail, and mocked mobile E2E are implemented.
-- Blocker: PR review/merge, deployment path verification, and live acceptance remain.
-- Next: Open the draft PR, inspect CI, merge after green checks, deploy through the verified LXC 258 path, and run disposable live acceptance without creating real inventory fixtures.
+- Progress: Feature branch reconciled with `origin/main`; fork-main PR merged and deployed to LXC 258. Transactional live BDPM import, local lookup, Homebox medicine mapping, package photo/notice attachment, notice retry, V2 IndexedDB preservation, compact capture/review, catalog filters/detail, and mocked mobile E2E are implemented.
+- Blocker: Authenticated disposable-fixture acceptance and upstream-owner merge remain.
+- Next: Run authenticated disposable-fixture acceptance without touching real inventory, then merge upstream PR when repository permission is available.
 - Durable updates: Product code, product docs, homelab-docs project page/log, and this active plan.
 - Safe to archive: no
 
@@ -35,5 +35,9 @@ database.
   and 2 mobile E2E tests pass.
 - Live BDPM import: 15,848 specialties, 20,893 presentations, and 32,385
   compositions rebuilt atomically in a temporary index.
-- Full repository format check, docs validation, PR, deployment, and live
-  acceptance: pending.
+- `uv run ruff check .` and `uv run vulture --min-confidence 70 --sort-by-size`:
+  pass.
+- Docker production build, direct `/api/version`, `companion.lan` `/api/version`,
+  and live `/medicines` route: pass.
+- Full repository format check, authenticated disposable-fixture acceptance, and
+  upstream-owner merge: pending.
