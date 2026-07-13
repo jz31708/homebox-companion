@@ -40,4 +40,7 @@ database.
 - Docker production build, direct `/api/version`, `companion.lan` `/api/version`,
   and live `/medicines` route: pass.
 - Full repository format check, authenticated disposable-fixture acceptance, and
-  upstream-owner merge: pending.
+  upstream-owner merge: pending. The repository live suite was attempted, but
+  this Windows runner has no `docker` executable (`WinError 2`); no live fixture
+  was created. Deployed auth-boundary smoke checks returned 401 for protected
+  medicine routes and the running container is healthy.
