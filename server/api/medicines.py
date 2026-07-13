@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from pathlib import Path
 from typing import Annotated, Any
@@ -23,6 +24,7 @@ DATA_DIR = Path("data")
 REFERENCE_PATH = DATA_DIR / "medicine-reference.sqlite3"
 NOTICE_DIR = DATA_DIR / "medicine-notices"
 MEDICINE_TAG = "medicine"
+_sync_lock = asyncio.Lock()
 
 
 class LookupRequest(BaseModel):
@@ -61,7 +63,7 @@ def _medicine_item_payload(medicine: MedicineDraft, tag_id: str) -> dict[str, An
     return {
         "name": medicine.display_name.strip(),
         "quantity": 1,
-        "description": "",
+        "description": medicine.short_purpose or "",
         "parentId": medicine.location_id,
         "tagIds": [str(tag_id)],
     }
@@ -104,13 +106,19 @@ def _catalog_item(item: dict[str, Any]) -> MedicineCatalogItem:
         official_notice_url=_field(fields, "Official notice"),
         notice_attachment_url=(f"/api/items/{item['id']}/attachments/{notice.get('id')}" if notice else None),
         remaining_level=_field(fields, "Remaining level"),
+        official_match=bool(_field(fields, "Medicine CIS") and _field(fields, "Official medicine page")),
+        reference_source=_field(fields, "Reference source"),
     )
 
 
-async def _medicine_tag(client, token: str) -> dict[str, Any]:
+async def find_medicine_tag(client, token: str) -> dict[str, Any] | None:
     tags = await client.list_tags(token)
-    existing = next((tag for tag in tags if str(tag.get("name", "")).casefold() == MEDICINE_TAG), None)
-    return existing or await client.create_tag(token, MEDICINE_TAG, "Medicine Cabinet V1 items")
+    return next((tag for tag in tags if str(tag.get("name", "")).casefold() == MEDICINE_TAG), None)
+
+
+async def ensure_medicine_tag(client, token: str) -> dict[str, Any]:
+    existing = await find_medicine_tag(client, token)
+    return existing or await client.create_tag(token, MEDICINE_TAG, "Medicine Cabinet items")
 
 
 @router.get("/reference/status")
@@ -125,13 +133,15 @@ async def reference_status():
 
 
 @router.post("/reference/sync")
-async def reference_sync():
-    files = await download_official_files()
-    metadata = metadata_for_downloads(files)
-    metadata["source_name"] = "Base de Données Publique des Médicaments"
-    metadata["parser_schema_version"] = "bdpm-v3"
-    store().rebuild(files, metadata)
-    return {"ok": True, "metadata": metadata}
+async def reference_sync(token: str = Depends(get_token)):
+    del token
+    async with _sync_lock:
+        files = await download_official_files()
+        metadata = metadata_for_downloads(files)
+        metadata["source_name"] = "Base de Données Publique des Médicaments"
+        metadata["parser_schema_version"] = "bdpm-v3"
+        store().rebuild(files, metadata)
+        return {"ok": True, "metadata": metadata}
 
 
 @router.post("/lookup")
@@ -152,7 +162,9 @@ async def list_medicines(
     page: int = 1,
     page_size: int = 50,
 ):
-    tag = await _medicine_tag(client, token)
+    tag = await find_medicine_tag(client, token)
+    if not tag:
+        return {"items": [], "page": page, "pageSize": page_size, "total": 0}
     response = await client.list_items(token, tag_ids=[str(tag["id"])], page=page, page_size=page_size)
     raw_items = response.get("items", [])
     return {
@@ -167,8 +179,8 @@ async def list_medicines(
 async def get_medicine(homebox_item_id: str, client=Depends(get_client), token: str = Depends(get_token)):
     item = await client.get_item(token, homebox_item_id)
     tag_ids = {str(tag.get("id")) for tag in item.get("tags", [])}
-    tag = await _medicine_tag(client, token)
-    if str(tag.get("id")) not in tag_ids:
+    tag = await find_medicine_tag(client, token)
+    if not tag or str(tag.get("id")) not in tag_ids:
         raise HTTPException(status_code=404, detail="Medicine item not found")
     return _catalog_item(item)
 
@@ -181,7 +193,7 @@ async def create_medicine(
     token: str = Depends(get_token),
 ):
     medicine = MedicineDraft.model_validate_json(draft)
-    tag = await _medicine_tag(client, token)
+    tag = await ensure_medicine_tag(client, token)
     fields: dict[str, str] = {}
     reference = medicine.reference
     values = {
@@ -211,7 +223,7 @@ async def create_medicine(
     try:
         update = {
             "name": medicine.display_name.strip(),
-            "description": "",
+            "description": medicine.short_purpose or "",
             "quantity": 1,
             "parentId": medicine.location_id,
             "tagIds": [str(tag["id"])],
@@ -252,6 +264,8 @@ async def create_medicine(
                 token, item_id, pdf, f"official-notice-{reference.cis}.pdf", "application/pdf", "notice"
             )
             notice_attached = True
+            if not medicine.short_purpose and document.short_purpose:
+                await client.update_item(token, item_id, {"description": document.short_purpose})
             fields["Notice snapshot retrieved at"] = document.retrieved_at.isoformat()
             fields["Notice snapshot checksum"] = document.sha256 or ""
             await client.update_item(

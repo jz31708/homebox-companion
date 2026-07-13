@@ -23,6 +23,7 @@ class MedicineReference(BaseModel):
 class NoticeSection(BaseModel):
     heading: str
     paragraphs: list[str] = Field(default_factory=list)
+    bullet_lists: list[list[str]] = Field(default_factory=list)
 
 
 class NoticeDocument(BaseModel):
@@ -31,6 +32,7 @@ class NoticeDocument(BaseModel):
     retrieved_at: datetime
     title: str
     sections: list[NoticeSection] = Field(default_factory=list)
+    short_purpose: str | None = None
     source_updated_at: str | None = None
     sha256: str | None = None
 
@@ -41,6 +43,7 @@ class MedicineDraft(BaseModel):
     cip13: str | None = None
     reference: MedicineReference | None = None
     display_name: str = Field(min_length=1)
+    short_purpose: str | None = None
     expiry_date: str | None = None
     opened_date: str | None = None
     remaining_level: Literal["full", "half", "low", "empty", "unknown"] = "unknown"
@@ -67,3 +70,5 @@ class MedicineCatalogItem(BaseModel):
     official_notice_url: str | None = None
     notice_attachment_url: str | None = None
     remaining_level: str | None = None
+    official_match: bool = False
+    reference_source: str | None = None

@@ -233,7 +233,19 @@ export async function load(): Promise<StoredMedicineMission | null> {
 }
 
 function normalizeLoadedSession(session: StoredMedicineMission): StoredMedicineMission {
-	const queuedScans = session.queuedScans ?? session.drafts ?? [];
+	const queuedScans = (session.queuedScans ?? session.drafts ?? []).map((scan) => ({
+		...scan,
+		inputSnapshot: scan.inputSnapshot ?? {
+			barcodeText: scan.code,
+			expiryDate: '',
+			openedDate: '',
+			remainingDoses: null,
+			remainingDoseLabel: 'unknown' as const,
+			note: scan.userNote ?? '',
+			photoIds: scan.evidencePhotoIds ?? [],
+			capturedAtMs: scan.createdAtMs,
+		},
+	}));
 	return {
 		...session,
 		version: 2,

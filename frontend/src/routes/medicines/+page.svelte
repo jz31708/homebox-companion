@@ -9,10 +9,13 @@
 	let filter: Filter = 'all';
 	let loading = true;
 	let error = '';
+	let loadingProgress = '';
 
 	onMount(async () => {
 		try {
-			records = (await medicines.list()).items;
+			loadingProgress = 'Loading all pages…';
+			records = await medicines.listAll();
+			loadingProgress = '';
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Could not load the cabinet';
 		} finally {
@@ -87,6 +90,7 @@
 	</nav>
 	{#if loading}<p class="text-neutral-300">Loading cabinet…</p>
 	{:else if error}<p role="alert" class="text-error-400">{error}</p>
+	{:else if loadingProgress}<p class="text-neutral-300">{loadingProgress}</p>
 	{:else if filtered.length === 0}<p
 			class="rounded-lg border border-neutral-800 p-6 text-neutral-300"
 		>

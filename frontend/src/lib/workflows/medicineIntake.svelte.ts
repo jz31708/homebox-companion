@@ -14,6 +14,7 @@ import type {
 	MedicineIntakeStatus,
 	MedicinePhotoKind,
 	MedicineQueuedScan,
+	MedicineDraftInputSnapshot,
 	Progress,
 } from '$lib/types';
 
@@ -99,7 +100,9 @@ function candidateFromReference(
 		id: string;
 		expiryDate: string;
 		openedDate: string;
+		remainingDoses: number | null;
 		remainingDoseLabel: MedicineCandidate['remainingDoseLabel'];
+		note: string;
 		photoIds: string[];
 	}
 ): MedicineCandidate {
@@ -114,6 +117,8 @@ function candidateFromReference(
 		expiryDate: input.expiryDate || null,
 		openedDate: input.openedDate || null,
 		remainingDoseLabel: input.remainingDoseLabel,
+		remainingDoses: input.remainingDoses,
+		notes: input.note,
 		cip13: reference.cip13,
 		cis: reference.cis,
 		officialPageUrl: reference.official_page_url,
@@ -434,7 +439,9 @@ class MedicineIntakeWorkflow {
 						id: createId('medicine'),
 						expiryDate: this._expiryDate,
 						openedDate: this._openedDate,
+						remainingDoses: this._remainingDoses,
 						remainingDoseLabel: this._remainingDoseLabel,
+						note: this._note,
 						photoIds: this._photos.map((photo) => photo.id),
 					}),
 					warnings: local.warnings,
@@ -487,6 +494,16 @@ class MedicineIntakeWorkflow {
 		);
 		if (existing) return existing;
 		const now = Date.now();
+		const inputSnapshot: MedicineDraftInputSnapshot = {
+			barcodeText: normalized,
+			expiryDate: this._expiryDate,
+			openedDate: this._openedDate,
+			remainingDoses: this._remainingDoses,
+			remainingDoseLabel: this._remainingDoseLabel,
+			note: this._note,
+			photoIds: this._photos.filter((photo) => !photo.ignored).map((photo) => photo.id),
+			capturedAtMs: now,
+		};
 		const scan: MedicineQueuedScan = {
 			id: createId('mq'),
 			missionId: this.missionId,
@@ -495,6 +512,7 @@ class MedicineIntakeWorkflow {
 			status: 'captured',
 			createdAtMs: now,
 			updatedAtMs: now,
+			inputSnapshot,
 			selectedLocationId: this._locationId,
 			selectedLocationPath: this._locationPath,
 			evidencePhotoIds: this._photos.filter((photo) => !photo.ignored).map((photo) => photo.id),
@@ -585,25 +603,37 @@ class MedicineIntakeWorkflow {
 				);
 				await this.persistAsync();
 				try {
+					const input = scan.inputSnapshot ?? {
+						barcodeText: scan.code,
+						expiryDate: '',
+						openedDate: '',
+						remainingDoses: null,
+						remainingDoseLabel: 'unknown' as const,
+						note: scan.userNote,
+						photoIds: scan.evidencePhotoIds,
+						capturedAtMs: scan.createdAtMs,
+					};
 					const local = await medicines.lookup(scan.code);
 					const result = local.reference
 						? {
 								candidate: candidateFromReference(local.reference, {
 									id: createId('medicine'),
-									expiryDate: this._expiryDate,
-									openedDate: this._openedDate,
-									remainingDoseLabel: this._remainingDoseLabel,
-									photoIds: scan.evidencePhotoIds,
+									expiryDate: input.expiryDate,
+									openedDate: input.openedDate,
+									remainingDoses: input.remainingDoses,
+									remainingDoseLabel: input.remainingDoseLabel,
+									note: input.note,
+									photoIds: input.photoIds,
 								}),
 								warnings: local.warnings,
 							}
 						: await vision.medicineLookup({
 								barcodeText: scan.code,
-								note: scan.userNote,
-								expiryDate: this._expiryDate,
-								openedDate: this._openedDate,
-								remainingDoses: this._remainingDoses,
-								remainingDoseLabel: this._remainingDoseLabel,
+								note: input.note,
+								expiryDate: input.expiryDate,
+								openedDate: input.openedDate,
+								remainingDoses: input.remainingDoses,
+								remainingDoseLabel: input.remainingDoseLabel,
 							});
 					const nextScans: MedicineQueuedScan[] = this._queuedScans.map((item) =>
 						item.id === scan.id
@@ -661,6 +691,16 @@ class MedicineIntakeWorkflow {
 				missionId: this.missionId,
 				missionKind: 'medicine_intake' as const,
 				code: input.code,
+				inputSnapshot: {
+					barcodeText: input.code,
+					expiryDate: this._expiryDate,
+					openedDate: this._openedDate,
+					remainingDoses: this._remainingDoses,
+					remainingDoseLabel: this._remainingDoseLabel,
+					note: this._note,
+					photoIds: input.evidencePhotoIds,
+					capturedAtMs: now,
+				},
 				createdAtMs: now,
 				correctionHistory: [],
 				duplicateSuspicions: [],

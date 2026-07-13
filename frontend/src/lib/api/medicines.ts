@@ -47,6 +47,8 @@ export interface MedicineCatalogItem {
 	official_notice_url: string | null;
 	notice_attachment_url: string | null;
 	remaining_level: string | null;
+	official_match: boolean;
+	reference_source: string | null;
 }
 
 export const medicines = {
@@ -62,6 +64,21 @@ export const medicines = {
 			`/medicines?page=${page}&page_size=${pageSize}`,
 			{ signal }
 		),
+	listAll: async (signal?: AbortSignal) => {
+		const all: MedicineCatalogItem[] = [];
+		const seen = new Set<string>();
+		for (let page = 1; page <= 100; page += 1) {
+			const result = await medicines.list(page, 100, signal);
+			for (const item of result.items) {
+				if (!seen.has(item.homebox_item_id)) {
+					seen.add(item.homebox_item_id);
+					all.push(item);
+				}
+			}
+			if (all.length >= result.total || result.items.length === 0) break;
+		}
+		return all;
+	},
 
 	get: (itemId: string, signal?: AbortSignal) =>
 		request<MedicineCatalogItem>(`/medicines/${itemId}`, { signal }),
@@ -81,24 +98,26 @@ export const medicines = {
 				cip13: candidate.cip13,
 				display_name: candidate.name,
 				expiry_date: candidate.expiryDate || null,
+				short_purpose: candidate.generalUse || null,
 				opened_date: candidate.openedDate || null,
 				remaining_level: candidate.remainingDoseLabel || 'unknown',
 				location_id: locationId,
 				user_note: candidate.notes || null,
-				reference: candidate.databaseMatch
-					? {
-							cip13: candidate.databaseMatch.cip13 || candidate.cip13,
-							cis: candidate.databaseMatch.cis,
-							name: candidate.name,
-							pharmaceutical_form: candidate.form,
-							presentation: candidate.packageSize,
-							active_substances: candidate.databaseMatch.activeSubstances || [],
-							official_page_url: candidate.officialPageUrl,
-							notice_url: candidate.noticeUrl,
-							rcp_url: candidate.rcpUrl,
-							source_name: 'Base de Données Publique des Médicaments',
-						}
-					: null,
+				reference:
+					candidate.databaseMatch?.cis && candidate.officialPageUrl && candidate.noticeUrl
+						? {
+								cip13: candidate.databaseMatch.cip13 || candidate.cip13,
+								cis: candidate.databaseMatch.cis,
+								name: candidate.name,
+								pharmaceutical_form: candidate.form,
+								presentation: candidate.packageSize,
+								active_substances: candidate.databaseMatch.activeSubstances || [],
+								official_page_url: candidate.officialPageUrl,
+								notice_url: candidate.noticeUrl,
+								rcp_url: candidate.rcpUrl,
+								source_name: 'Base de Données Publique des Médicaments',
+							}
+						: null,
 			})
 		);
 		for (const photo of photos) form.append('photos', photo);
