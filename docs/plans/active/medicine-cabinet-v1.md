@@ -4,8 +4,8 @@
 
 - State: continuing
 - Progress: Feature branch reconciled with `origin/main`; fork-main PR merged and deployed to LXC 258. Transactional live BDPM import, local lookup, Homebox medicine mapping, package photo/notice attachment, notice retry, V2 IndexedDB preservation, compact capture/review, catalog filters/detail, and mocked mobile E2E are implemented.
-- Blocker: Authenticated disposable-fixture acceptance and upstream-owner merge remain.
-- Next: Run authenticated disposable-fixture acceptance without touching real inventory, then merge upstream PR when repository permission is available.
+- Blocker: Upstream-owner merge remains; authenticated disposable-fixture acceptance is complete.
+- Next: Merge upstream PR when repository permission is available, then archive this plan.
 - Durable updates: Product code, product docs, homelab-docs project page/log, and this active plan.
 - Safe to archive: no
 
@@ -39,8 +39,10 @@ database.
   pass.
 - Docker production build, direct `/api/version`, `companion.lan` `/api/version`,
   and live `/medicines` route: pass.
-- Full repository format check, authenticated disposable-fixture acceptance, and
-  upstream-owner merge: pending. The repository live suite was attempted, but
-  this Windows runner has no `docker` executable (`WinError 2`); no live fixture
-  was created. Deployed auth-boundary smoke checks returned 401 for protected
-  medicine routes and the running container is healthy.
+- Full repository format check and upstream-owner merge: pending. Authenticated
+  disposable acceptance completed on LXC 258 using isolated Homebox and
+  Companion containers: login, location selection, item creation, package-photo
+  upload, expiry/remaining-field persistence, medicine listing/detail, and
+  official BDPM sync/local lookup all passed. Temporary containers and network
+  were removed afterward. The Windows Docker suite remains unavailable because
+  that runner has no `docker` executable (`WinError 2`).
