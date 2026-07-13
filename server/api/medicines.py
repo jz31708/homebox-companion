@@ -167,8 +167,18 @@ async def list_medicines(
         return {"items": [], "page": page, "pageSize": page_size, "total": 0}
     response = await client.list_items(token, tag_ids=[str(tag["id"])], page=page, page_size=page_size)
     raw_items = response.get("items", [])
+    async def hydrate(item: dict[str, Any]) -> dict[str, Any]:
+        item_id = item.get("id")
+        if not item_id:
+            return item
+        try:
+            return await client.get_item(token, str(item_id))
+        except Exception:
+            return item
+
+    hydrated_items = await asyncio.gather(*(hydrate(item) for item in raw_items))
     return {
-        "items": [_catalog_item(item) for item in raw_items],
+        "items": [_catalog_item(item) for item in hydrated_items],
         "page": page,
         "pageSize": page_size,
         "total": response.get("total", len(raw_items)),

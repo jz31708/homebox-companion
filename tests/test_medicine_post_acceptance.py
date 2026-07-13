@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from homebox_companion.medicine.models import MedicineDraft
 from homebox_companion.medicine.reference_parser import decode_official
-from server.api.medicines import _catalog_item, _field_payload, _medicine_item_payload, find_medicine_tag
+from server.api.medicines import (
+    _catalog_item,
+    _field_payload,
+    _medicine_item_payload,
+    find_medicine_tag,
+    list_medicines,
+)
 
 
 def _draft(**overrides: object) -> MedicineDraft:
@@ -65,6 +71,29 @@ def test_medicine_tag_read_does_not_create_missing_tag() -> None:
     import asyncio
 
     assert asyncio.run(find_medicine_tag(Client(), "token")) is None
+
+
+def test_catalog_hydrates_detail_fields_and_attachments() -> None:
+    class Client:
+        async def list_tags(self, _token: str):
+            return [{"id": "tag-1", "name": "medicine"}]
+
+        async def list_items(self, *_args, **_kwargs):
+            return {"items": [{"id": "item-1"}], "total": 1}
+
+        async def get_item(self, _token: str, _item_id: str):
+            return {
+                "id": "item-1",
+                "name": "Hydrated medicine",
+                "fields": [{"name": "Remaining level", "textValue": "half"}],
+                "attachments": [{"id": "photo-1", "type": "photo"}],
+            }
+
+    import asyncio
+
+    response = asyncio.run(list_medicines(Client(), "token"))
+    assert response["items"][0].remaining_level == "half"
+    assert response["items"][0].package_photo_url.endswith("/photo-1")
 
 
 def test_decode_repairs_double_encoded_utf8_without_corrupting_cp1252() -> None:
