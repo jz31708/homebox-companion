@@ -92,8 +92,8 @@ def test_catalog_hydrates_detail_fields_and_attachments() -> None:
     import asyncio
 
     response = asyncio.run(list_medicines(Client(), "token"))
-    assert response["items"][0]["remaining_level"] == "half"
-    assert response["items"][0]["package_photo_url"].endswith("/photo-1")
+    assert response["items"][0].remaining_level == "half"
+    assert response["items"][0].package_photo_url.endswith("/photo-1")
 
 
 def test_decode_repairs_double_encoded_utf8_without_corrupting_cp1252() -> None:
