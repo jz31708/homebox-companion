@@ -13,7 +13,7 @@ Homebox Companion is a forked product for Thomas's homelab. Future Codex runs sh
 ## What May Diverge
 
 - mobile-first mission flows
-- command-center review pages
+- compact review pages
 - candidate state machines
 - local recovery queues
 - medicine-specific official-reference fields
@@ -24,8 +24,9 @@ Homebox Companion is a forked product for Thomas's homelab. Future Codex runs sh
 ## Current Fork-Owned Concepts
 
 - Bulk Sweep: room/shelf capture with evidence-backed candidates.
-- Medicine Intake: medicine mission inbox with official references, dates, blockers, payload preview, and recoverable submit failure.
-- Medicine mission recovery: IndexedDB-backed candidate persistence for phone reload/tab-loss recovery, including evidence photos and Homebox payload preview.
+- Medicine Intake: fast medicine mission inbox with official references, physical-box dates, package photos, and recoverable submit failure.
+- Medicine Cabinet V1: local official BDPM lookup, Homebox medicine-tag mapping, notice PDF snapshots/retry, and filtered catalog browser.
+- Medicine mission recovery: IndexedDB-backed candidate persistence for phone reload/tab-loss recovery, including evidence photos and per-draft metadata.
 - Mission chooser: product-level entry point for mission selection, not just capture mode selection.
 
 ## Guardrails For Future Agents

@@ -27,7 +27,7 @@ The fork should optimize for missions:
 
 ## Shipped Slice
 
-The Medicine Intake slice now models barcode/photo analysis as a mission inbox and command center.
+The Medicine Cabinet V1 slice now models barcode/photo analysis as a fast mission inbox and searchable Homebox-backed cabinet.
 
 - Mission chooser says "Choose Mission" and frames Classic Capture, Bulk Sweep, Medicine Intake, plus future Pack/Travel and Find/Ask slots.
 - Medicine capture is "Medicine Mission" and keeps the selected Homebox location visible.
@@ -35,7 +35,9 @@ The Medicine Intake slice now models barcode/photo analysis as a mission inbox a
 - Candidate states are visible and recoverable: `captured`, `analyzing`, `needs_review`, `blocked`, `ready`, `submitted`, `failed`, and `recovered`.
 - Candidate records preserve selected location, evidence photo IDs, user note, AI summary, correction history, confidence, blocker reasons, duplicate suspicions, warnings, error, and Homebox payload preview.
 - Candidate records are persisted in IndexedDB so phone reloads or tab interruption can recover the active medicine mission, including location, dates, notes, queued candidates, failed state, correction history, payload preview, and evidence photo files.
-- Medicine review is now a command center with status/confidence, mission/location/evidence/corrections summary, decision blockers, official medicine references, evidence, explicit Homebox payload preview, save, and recover actions.
+- Medicine review is compact: name, official reference, physical dates, remaining level, package evidence, notice status, save, and recover actions.
+- The backend uses the official monthly BDPM files as a transactional local SQLite index, permits expired/unknown/unmatched saves, maps stable medicine custom fields, and attaches package photos plus deterministic notice PDFs when available.
+- The Medicines browser supports All, Expired, Expiring soon, Current, and Expiry unknown views, search, lazy package images, detail pages, official notice links, and notice retry.
 - Submit failure marks the active candidate `failed` and keeps it visible. Recovery clears the failed state so Thomas can fix fields and retry.
 - Successful submit keeps the mission at the same location and returns to the medicine inbox for the next box.
 

@@ -15,7 +15,7 @@ import { dataUrlToFile, fileToDataUrl } from './serialize';
 const log = createLogger({ prefix: 'MedicineMissionPersistence' });
 
 const DB_NAME = 'hbc-medicine-mission-recovery';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = 'missions';
 const SESSION_KEY = 'current';
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -33,15 +33,18 @@ export interface StoredMedicinePhoto {
 	kind: MedicinePhotoKind;
 }
 
-export interface StoredMedicineCandidate extends Omit<MedicineCandidate, 'originalFiles'> {}
+export type StoredMedicineCandidate = Omit<MedicineCandidate, 'originalFiles'>;
 
-export interface StoredMedicineQueuedScan
-	extends Omit<MedicineQueuedScan, 'candidate' | 'homeboxPayloadPreview'> {
+export interface StoredMedicineQueuedScan extends Omit<
+	MedicineQueuedScan,
+	'candidate' | 'homeboxPayloadPreview'
+> {
 	candidate?: StoredMedicineCandidate | null;
 	homeboxPayloadPreview?: BatchCreateRequest | null;
 }
 
 export interface StoredMedicineMission {
+	version?: 2;
 	id: string;
 	createdAt: number;
 	updatedAt: number;
@@ -63,6 +66,10 @@ export interface StoredMedicineMission {
 	activeQueueId: string | null;
 	warnings: string[];
 	error: string | null;
+	/** V2 aliases retained alongside the legacy fields for lossless migration. */
+	drafts?: StoredMedicineQueuedScan[];
+	currentDraft?: StoredMedicineCandidate | null;
+	savedThisSession?: Array<{ itemId: string; name: string; savedAtMs: number }>;
 }
 
 export interface MedicineMissionSummary {
@@ -81,10 +88,7 @@ function getDb(): Promise<IDBPDatabase> {
 	if (!dbPromise) {
 		dbPromise = openDB(DB_NAME, DB_VERSION, {
 			upgrade(db) {
-				if (db.objectStoreNames.contains(STORE_NAME)) {
-					db.deleteObjectStore(STORE_NAME);
-				}
-				db.createObjectStore(STORE_NAME);
+				if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
 			},
 		});
 	}
@@ -106,9 +110,12 @@ function formatAge(timestamp: number): string {
 	return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
 }
 
-function stripCandidate(candidate: MedicineCandidate | null | undefined): StoredMedicineCandidate | null {
+function stripCandidate(
+	candidate: MedicineCandidate | null | undefined
+): StoredMedicineCandidate | null {
 	if (!candidate) return null;
-	const { originalFiles: _originalFiles, ...stored } = candidate;
+	const stored = { ...candidate } as StoredMedicineCandidate & { originalFiles?: File[] };
+	delete stored.originalFiles;
 	return stored;
 }
 
@@ -138,7 +145,9 @@ export async function serializePhoto(photo: MedicineCapturedPhoto): Promise<Stor
 	};
 }
 
-export async function deserializePhoto(stored: StoredMedicinePhoto): Promise<MedicineCapturedPhoto> {
+export async function deserializePhoto(
+	stored: StoredMedicinePhoto
+): Promise<MedicineCapturedPhoto> {
 	const file = await dataUrlToFile(stored.dataUrl, stored.filename, stored.mimeType);
 	return {
 		id: stored.id,
@@ -153,7 +162,9 @@ export async function deserializePhoto(stored: StoredMedicinePhoto): Promise<Med
 	};
 }
 
-export function serializeCandidate(candidate: MedicineCandidate | null): StoredMedicineCandidate | null {
+export function serializeCandidate(
+	candidate: MedicineCandidate | null
+): StoredMedicineCandidate | null {
 	return stripCandidate(candidate);
 }
 
@@ -188,10 +199,15 @@ export async function save(session: StoredMedicineMission): Promise<void> {
 	if (!browser) return;
 	try {
 		const db = await getDb();
+		session.version = 2;
+		session.drafts = session.queuedScans;
+		session.currentDraft = session.candidate;
 		session.updatedAt = Date.now();
 		const plainSession = JSON.parse(JSON.stringify(session)) as StoredMedicineMission;
 		await db.put(STORE_NAME, plainSession, SESSION_KEY);
-		log.debug(`Saved medicine mission: status=${session.status}, candidates=${session.queuedScans.length}`);
+		log.debug(
+			`Saved medicine mission: status=${session.status}, candidates=${session.queuedScans.length}`
+		);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		log.warn(`Failed to save medicine mission: ${message}`);
@@ -208,7 +224,7 @@ export async function load(): Promise<StoredMedicineMission | null> {
 			await clear();
 			return null;
 		}
-		return session;
+		return normalizeLoadedSession(session);
 	} catch (error) {
 		log.warn('Failed to load medicine mission', error);
 		await clear();
@@ -216,10 +232,25 @@ export async function load(): Promise<StoredMedicineMission | null> {
 	}
 }
 
+function normalizeLoadedSession(session: StoredMedicineMission): StoredMedicineMission {
+	const queuedScans = session.queuedScans ?? session.drafts ?? [];
+	return {
+		...session,
+		version: 2,
+		queuedScans,
+		candidate: session.candidate ?? session.currentDraft ?? null,
+		drafts: queuedScans,
+		currentDraft: session.candidate ?? session.currentDraft ?? null,
+		savedThisSession: session.savedThisSession ?? [],
+	};
+}
+
 export async function hasRecoverableMission(): Promise<boolean> {
 	const session = await load();
 	if (!session || session.status === 'idle' || session.status === 'complete') return false;
-	return Boolean(session.locationId || session.photos.length || session.queuedScans.length || session.candidate);
+	return Boolean(
+		session.locationId || session.photos.length || session.queuedScans.length || session.candidate
+	);
 }
 
 export async function getMissionSummary(): Promise<MedicineMissionSummary | null> {
@@ -240,7 +271,8 @@ export async function getMissionSummary(): Promise<MedicineMissionSummary | null
 		status: session.status,
 		photoCount: session.photos.length,
 		candidateCount: session.queuedScans.length,
-		recoverableCount: session.queuedScans.filter((scan) => recoverableStatuses.has(scan.status)).length,
+		recoverableCount: session.queuedScans.filter((scan) => recoverableStatuses.has(scan.status))
+			.length,
 	};
 }
 

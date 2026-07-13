@@ -1,6 +1,7 @@
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
-import { items, vision } from '$lib/api';
+import { medicines, vision } from '$lib/api';
+import type { MedicineReference } from '$lib/api/medicines';
 import { workflowLogger as log } from '$lib/utils/logger';
 import * as medicineMissionPersistence from '$lib/services/medicineMissionPersistence';
 import type {
@@ -76,13 +77,7 @@ function buildMedicinePayload(
 }
 
 function candidateBlockers(candidate: MedicineCandidate): string[] {
-	const blockers = new Set<string>();
-	if (!candidate.name?.trim()) blockers.add('Medicine name is missing.');
-	if ((candidate.confidence ?? 0) < 0.75) blockers.add('Confidence is below 75%.');
-	for (const reason of candidate.uncertaintyReasons ?? []) {
-		if (reason.trim()) blockers.add(reason);
-	}
-	return [...blockers];
+	return candidate.name?.trim() ? [] : ['Medicine name is required before saving.'];
 }
 
 function candidateStatus(candidate: MedicineCandidate): MedicineCandidateState {
@@ -96,6 +91,50 @@ function candidateAiSummary(candidate: MedicineCandidate): string {
 		.filter(Boolean)
 		.map((value) => `${value}`);
 	return parts.join(' | ');
+}
+
+function candidateFromReference(
+	reference: MedicineReference,
+	input: {
+		id: string;
+		expiryDate: string;
+		openedDate: string;
+		remainingDoseLabel: MedicineCandidate['remainingDoseLabel'];
+		photoIds: string[];
+	}
+): MedicineCandidate {
+	return {
+		id: input.id,
+		name: reference.name,
+		quantity: 1,
+		description: '',
+		activeIngredient: reference.active_substances.join(', '),
+		form: reference.pharmaceutical_form,
+		packageSize: reference.presentation,
+		expiryDate: input.expiryDate || null,
+		openedDate: input.openedDate || null,
+		remainingDoseLabel: input.remainingDoseLabel,
+		cip13: reference.cip13,
+		cis: reference.cis,
+		officialPageUrl: reference.official_page_url,
+		noticeUrl: reference.notice_url,
+		rcpUrl: reference.rcp_url,
+		confidence: 1,
+		uncertaintyReasons: [],
+		sourcePhotoIds: input.photoIds,
+		databaseMatch: {
+			source: 'bdpm',
+			cis: reference.cis,
+			cip13: reference.cip13,
+			denomination: reference.name,
+			form: reference.pharmaceutical_form,
+			activeSubstances: reference.active_substances,
+			officialPageUrl: reference.official_page_url,
+			noticeUrl: reference.notice_url,
+			rcpUrl: reference.rcp_url,
+			confidence: 1,
+		},
+	};
 }
 
 class MedicineIntakeWorkflow {
@@ -386,17 +425,33 @@ class MedicineIntakeWorkflow {
 		this._analysisProgress = { current: 1, total: 2, message: 'Looking up scanned code...' };
 		this._error = null;
 		try {
-			const result = await vision.medicineLookup(
-				{
-					barcodeText: code,
-					note: this._note,
-					expiryDate: this._expiryDate,
-					openedDate: this._openedDate,
-					remainingDoses: this._remainingDoses,
-					remainingDoseLabel: this._remainingDoseLabel,
-				},
-				{ signal: this.abortController.signal }
-			);
+			const local = await medicines.lookup(code, this.abortController.signal);
+			let result: MedicineDetectResponse;
+			if (local.reference) {
+				const reference = local.reference;
+				result = {
+					candidate: candidateFromReference(reference, {
+						id: createId('medicine'),
+						expiryDate: this._expiryDate,
+						openedDate: this._openedDate,
+						remainingDoseLabel: this._remainingDoseLabel,
+						photoIds: this._photos.map((photo) => photo.id),
+					}),
+					warnings: local.warnings,
+				};
+			} else {
+				result = await vision.medicineLookup(
+					{
+						barcodeText: code,
+						note: this._note,
+						expiryDate: this._expiryDate,
+						openedDate: this._openedDate,
+						remainingDoses: this._remainingDoses,
+						remainingDoseLabel: this._remainingDoseLabel,
+					},
+					{ signal: this.abortController.signal }
+				);
+			}
 			this._analysisProgress = { current: 2, total: 2, message: 'Preparing medicine review...' };
 			this._candidate = this.attachLocalFiles(result.candidate, false);
 			this._warnings = result.warnings;
@@ -498,7 +553,9 @@ class MedicineIntakeWorkflow {
 
 	openNextReadyScan(): boolean {
 		const scan = this._queuedScans.find(
-			(item) => ['ready', 'needs_review', 'blocked', 'failed', 'recovered'].includes(item.status) && item.candidate
+			(item) =>
+				['ready', 'needs_review', 'blocked', 'failed', 'recovered'].includes(item.status) &&
+				item.candidate
 		);
 		return scan ? this.openQueuedScan(scan.id) : false;
 	}
@@ -528,14 +585,26 @@ class MedicineIntakeWorkflow {
 				);
 				await this.persistAsync();
 				try {
-					const result = await vision.medicineLookup({
-						barcodeText: scan.code,
-						note: this._note,
-						expiryDate: this._expiryDate,
-						openedDate: this._openedDate,
-						remainingDoses: this._remainingDoses,
-						remainingDoseLabel: this._remainingDoseLabel,
-					});
+					const local = await medicines.lookup(scan.code);
+					const result = local.reference
+						? {
+								candidate: candidateFromReference(local.reference, {
+									id: createId('medicine'),
+									expiryDate: this._expiryDate,
+									openedDate: this._openedDate,
+									remainingDoseLabel: this._remainingDoseLabel,
+									photoIds: scan.evidencePhotoIds,
+								}),
+								warnings: local.warnings,
+							}
+						: await vision.medicineLookup({
+								barcodeText: scan.code,
+								note: scan.userNote,
+								expiryDate: this._expiryDate,
+								openedDate: this._openedDate,
+								remainingDoses: this._remainingDoses,
+								remainingDoseLabel: this._remainingDoseLabel,
+							});
 					const nextScans: MedicineQueuedScan[] = this._queuedScans.map((item) =>
 						item.id === scan.id
 							? {
@@ -547,7 +616,9 @@ class MedicineIntakeWorkflow {
 									aiSummary: candidateAiSummary(result.candidate),
 									confidence: result.candidate.confidence,
 									blockerReasons: candidateBlockers(result.candidate),
-									duplicateSuspicions: result.candidate.databaseMatch ? [] : ['No public database match.'],
+									duplicateSuspicions: result.candidate.databaseMatch
+										? []
+										: ['No public database match.'],
 									homeboxPayloadPreview: buildMedicinePayload(result.candidate, this._locationId),
 									updatedAtMs: Date.now(),
 								}
@@ -616,7 +687,10 @@ class MedicineIntakeWorkflow {
 		return next;
 	}
 
-	private attachLocalFiles(candidate: MedicineCandidate, fallbackToAllPhotos: boolean): MedicineCandidate {
+	private attachLocalFiles(
+		candidate: MedicineCandidate,
+		fallbackToAllPhotos: boolean
+	): MedicineCandidate {
 		const files = candidate.sourcePhotoIds
 			.map((id) => this._photos.find((photo) => photo.id === id)?.file)
 			.filter((file): file is File => Boolean(file));
@@ -672,14 +746,13 @@ class MedicineIntakeWorkflow {
 		this._status = 'submitting';
 		this._submissionProgress = { current: 0, total: 1, message: 'Creating medicine item...' };
 		try {
-			const request = buildMedicinePayload(candidate, this._locationId);
-			const created = await items.create(request);
-			const item = created.created[0];
-			if (item?.id) {
-				for (const file of candidate.originalFiles?.slice(0, 6) ?? []) {
-					await items.uploadAttachment(item.id, file);
-				}
-			}
+			if (!this._locationId) throw new Error('Choose a medicine location before saving.');
+			const created = await medicines.create(
+				candidate,
+				this._locationId,
+				(candidate.originalFiles ?? []).slice(0, 3)
+			);
+			if (created.warnings.length) this._warnings = [...created.warnings];
 			this._submissionProgress = { current: 1, total: 1, message: 'Medicine submitted.' };
 			if (this._activeQueueId) {
 				const submittedId = this._activeQueueId;
@@ -735,7 +808,9 @@ class MedicineIntakeWorkflow {
 		await this.persistSnapshot();
 	}
 
-	private async persistSnapshot(overrides: { queuedScans?: MedicineQueuedScan[] } = {}): Promise<void> {
+	private async persistSnapshot(
+		overrides: { queuedScans?: MedicineQueuedScan[] } = {}
+	): Promise<void> {
 		this.persistChain = this.persistChain
 			.catch(() => undefined)
 			.then(() => this.doPersist(overrides));
@@ -782,10 +857,14 @@ class MedicineIntakeWorkflow {
 		const session = await medicineMissionPersistence.load();
 		if (!session) return false;
 		for (const photo of this._photos) safeRevoke(photo.previewUrl);
-		const photos = await Promise.all(session.photos.map(medicineMissionPersistence.deserializePhoto));
+		const photos = await Promise.all(
+			session.photos.map(medicineMissionPersistence.deserializePhoto)
+		);
 		this.missionId = session.missionId;
 		this._status =
-			session.status === 'analyzing' || session.status === 'submitting' ? 'capturing' : session.status;
+			session.status === 'analyzing' || session.status === 'submitting'
+				? 'capturing'
+				: session.status;
 		this._locationId = session.locationId;
 		this._locationName = session.locationName;
 		this._locationPath = session.locationPath;
@@ -798,7 +877,10 @@ class MedicineIntakeWorkflow {
 		this._remainingDoses = session.remainingDoses;
 		this._remainingDoseLabel = session.remainingDoseLabel;
 		this._candidate = medicineMissionPersistence.deserializeCandidate(session.candidate, photos);
-		this._queuedScans = medicineMissionPersistence.deserializeQueuedScans(session.queuedScans, photos);
+		this._queuedScans = medicineMissionPersistence.deserializeQueuedScans(
+			session.queuedScans,
+			photos
+		);
 		this._activeQueueId = session.activeQueueId;
 		this._warnings = session.warnings;
 		this._error = session.error;

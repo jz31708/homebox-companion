@@ -9,7 +9,7 @@
 	import BackLink from '$lib/components/BackLink.svelte';
 	import AnalysisProgressBar from '$lib/components/AnalysisProgressBar.svelte';
 	import type { MedicineCandidate } from '$lib/types';
-	import { AlertTriangle, Check, ExternalLink, ImageIcon, Pill, RotateCcw } from 'lucide-svelte';
+	import { Check, ExternalLink, ImageIcon, Pill } from 'lucide-svelte';
 
 	const workflow = medicineIntakeWorkflow;
 
@@ -40,11 +40,6 @@
 	function activeRecord() {
 		return workflow.state.queuedScans.find((scan) => scan.id === workflow.state.activeQueueId);
 	}
-
-	function payloadPreview() {
-		const payload = activeRecord()?.homeboxPayloadPreview;
-		return JSON.stringify(payload ?? {}, null, 2);
-	}
 </script>
 
 <svelte:head>
@@ -55,9 +50,9 @@
 	<StepIndicator currentStep={3} />
 	<BackLink href="/medicine-capture" label="Back to medicine inbox" />
 
-	<h2 class="mb-1 text-h2 text-neutral-100">Medicine Command Center</h2>
+	<h2 class="mb-1 text-h2 text-neutral-100">Review medicine</h2>
 	<p class="mb-4 text-body-sm text-neutral-400">
-		Confirm confidence, blockers, evidence, and the exact Homebox payload before saving.
+		Confirm the package details. Expired, unknown, and unmatched medicines can still be saved.
 	</p>
 
 	{#if workflow.state.candidate}
@@ -69,7 +64,9 @@
 					<Pill size={20} strokeWidth={1.5} class="text-success-300" />
 					<h3 class="truncate font-semibold text-neutral-100">{candidate.name}</h3>
 				</div>
-				<span class="rounded-full border border-neutral-700 px-2 py-1 text-caption text-neutral-300">
+				<span
+					class="rounded-full border border-neutral-700 px-2 py-1 text-caption text-neutral-300"
+				>
 					{record?.status ?? 'needs_review'} - {Math.round(candidate.confidence * 100)}%
 				</span>
 			</div>
@@ -174,30 +171,16 @@
 			</div>
 		</div>
 
-		{#if record?.blockerReasons.length || record?.error || record?.duplicateSuspicions.length}
-			<div class="mb-4 rounded-xl border border-warning-500/40 bg-warning-500/10 p-4">
-				<div class="mb-2 flex items-center gap-2 text-warning-200">
-					<AlertTriangle size={18} strokeWidth={1.5} />
-					<h3 class="font-semibold">Decision Needed</h3>
-				</div>
-				<ul class="space-y-1 text-body-sm text-warning-100">
-					{#if record?.error}
-						<li>{record.error}</li>
-					{/if}
-					{#each record?.blockerReasons ?? [] as reason (reason)}
-						<li>{reason}</li>
-					{/each}
-					{#each record?.duplicateSuspicions ?? [] as suspicion (suspicion)}
-						<li>{suspicion}</li>
-					{/each}
-				</ul>
-				{#if record?.status === 'failed'}
-					<div class="mt-3">
-						<Button variant="secondary" onclick={recover}>
-							<RotateCcw size={16} strokeWidth={1.5} />
-							<span>Recover Candidate</span>
-						</Button>
-					</div>
+		{#if record?.error}
+			<div
+				role="alert"
+				class="mb-4 rounded-xl border border-warning-500/40 bg-warning-500/10 p-4 text-body-sm text-warning-100"
+			>
+				{record.error}
+				{#if record.status === 'failed'}
+					<button type="button" class="mt-2 block text-primary-300" onclick={recover}
+						>Keep draft and retry</button
+					>
 				{/if}
 			</div>
 		{/if}
@@ -263,25 +246,23 @@
 		<div class="mb-4 rounded-xl border border-neutral-700 bg-neutral-900 p-4">
 			<h3 class="mb-3 font-semibold text-neutral-100">Evidence</h3>
 			<div class="flex flex-wrap gap-2">
-			{#each record?.evidencePhotoIds ?? candidate.sourcePhotoIds as photoId (photoId)}
-				{@const photo = workflow.state.photos.find((p) => p.id === photoId)}
-				{#if photo}
-					<img src={photo.previewUrl} alt="Evidence" class="h-20 w-20 rounded-lg object-cover" />
-				{:else}
-					<div class="flex h-20 w-20 items-center justify-center rounded-lg bg-neutral-800">
-						<ImageIcon size={18} strokeWidth={1.5} class="text-neutral-500" />
-					</div>
+				{#each record?.evidencePhotoIds ?? candidate.sourcePhotoIds as photoId (photoId)}
+					{@const photo = workflow.state.photos.find((p) => p.id === photoId)}
+					{#if photo}
+						<img src={photo.previewUrl} alt="Evidence" class="h-20 w-20 rounded-lg object-cover" />
+					{:else}
+						<div class="flex h-20 w-20 items-center justify-center rounded-lg bg-neutral-800">
+							<ImageIcon size={18} strokeWidth={1.5} class="text-neutral-500" />
+						</div>
+					{/if}
+				{/each}
+				{#if !(record?.evidencePhotoIds.length || candidate.sourcePhotoIds.length)}
+					<p class="text-body-sm text-neutral-500">
+						Barcode-only candidate. Add a label photo from the mission inbox if the package needs
+						visual proof.
+					</p>
 				{/if}
-			{/each}
-			{#if !(record?.evidencePhotoIds.length || candidate.sourcePhotoIds.length)}
-				<p class="text-body-sm text-neutral-500">Barcode-only candidate. Add a label photo from the mission inbox if the package needs visual proof.</p>
-			{/if}
 			</div>
-		</div>
-
-		<div class="mb-4 rounded-xl border border-neutral-700 bg-neutral-900 p-4">
-			<h3 class="mb-3 font-semibold text-neutral-100">Homebox Payload Preview</h3>
-			<pre class="max-h-72 overflow-auto rounded-lg bg-neutral-950 p-3 text-caption text-neutral-300">{payloadPreview()}</pre>
 		</div>
 	{/if}
 

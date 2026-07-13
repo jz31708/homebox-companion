@@ -3,28 +3,37 @@
 ## Workboard handoff
 
 - State: continuing
-- Progress: Created `feature/medicine-cabinet-v1` from the medicine product branch and merged current `origin/main`. Added the first isolated BDPM/reference, barcode, expiry, notice/PDF, authenticated lookup/status, and cabinet browser slices; focused backend tests pass.
-- Blocker: Live BDPM descriptor/download, full Homebox item/attachment mapping, capture UI integration, CI, PR, deployment, and live acceptance remain.
-- Next: Reconcile the current medicine workflow with the V1 save contract, then add transactional reference import, notice retry/attachment handling, catalog metadata, and full acceptance coverage.
-- Durable updates: This active plan; product code under `src/homebox_companion/medicine`, `server/api/medicines.py`, frontend medicines route, and focused tests.
+- Progress: Feature branch reconciled with `origin/main`. Transactional live BDPM import, local lookup, Homebox medicine mapping, package photo/notice attachment, notice retry, V2 IndexedDB preservation, compact capture/review, catalog filters/detail, and mocked mobile E2E are implemented.
+- Blocker: PR review/merge, deployment path verification, and live acceptance remain.
+- Next: Open the draft PR, inspect CI, merge after green checks, deploy through the verified LXC 258 path, and run disposable live acceptance without creating real inventory fixtures.
+- Durable updates: Product code, product docs, homelab-docs project page/log, and this active plan.
 - Safe to archive: no
 
 ## Scope contract
 
-Homebox remains the inventory source of truth. V1 permits expired, unknown, unmatched, and manually named medicines; only a non-empty display name is required. User package photos are the primary image. No reminders, dosage/adherence, disposal advice, Google image scraping, or second inventory database.
+Homebox remains the inventory source of truth. V1 permits expired, unknown,
+unmatched, and manually named medicines; only a non-empty display name is
+required. User package photos are the primary image. No reminders,
+dosage/adherence, disposal advice, Google image scraping, or second inventory
+database.
 
 ## Phases
 
-1. Branch reconciliation and baseline checks — in progress
-2. Official BDPM SQLite cache and transactional sync — pending
-3. Notice fetch, purpose extraction, deterministic PDF, retry — pending
-4. Medicine mapping and isolated persistent capture drafts — pending
-5. Fast mobile capture/review and same-location continuation — pending
-6. Medicine browser and detail view — partial
-7. Backend/frontend acceptance tests — partial
-8. Product/homelab documentation, PR, merge, deployment, live acceptance — pending
+1. Branch reconciliation and baseline checks — completed
+2. Official BDPM SQLite cache and transactional sync — completed
+3. Notice fetch, purpose extraction, deterministic PDF, retry — completed
+4. Medicine mapping and isolated persistent capture drafts — completed
+5. Fast mobile capture/review and same-location continuation — completed
+6. Medicine browser and detail view — completed
+7. Backend/frontend acceptance tests — completed locally
+8. Product/homelab documentation, PR, merge, deployment, live acceptance — in progress
 
 ## Validation
 
-- Focused tests: 4 passed using Python 3.14 repository environment.
-- Full suite, frontend check/lint/build/e2e, docs validation, and live acceptance: pending.
+- Backend suite: 189 passed, 35 deselected by repository markers.
+- Frontend: svelte-check, ESLint, Prettier on changed files, production build,
+  and 2 mobile E2E tests pass.
+- Live BDPM import: 15,848 specialties, 20,893 presentations, and 32,385
+  compositions rebuilt atomically in a temporary index.
+- Full repository format check, docs validation, PR, deployment, and live
+  acceptance: pending.

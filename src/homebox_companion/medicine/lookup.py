@@ -26,7 +26,7 @@ def reference_from_rows(cip: dict, speciality: dict, compositions: list[dict]) -
         presentation=cip.get("label"),
         active_substances=substances,
         authorization_holder=speciality.get("authorization_holder"),
-        official_page_url=f"{OFFICIAL_BASE}/extrait.php?specid={cis}",
-        notice_url=f"{OFFICIAL_BASE}/extrait.php?specid={cis}",
-        rcp_url=f"{OFFICIAL_BASE}/extrait.php?specid={cis}",
+        official_page_url=f"{OFFICIAL_BASE}/medicament/{cis}/extrait",
+        notice_url=f"{OFFICIAL_BASE}/medicament/{cis}/extrait",
+        rcp_url=f"{OFFICIAL_BASE}/medicament/{cis}/extrait",
     )

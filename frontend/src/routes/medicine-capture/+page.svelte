@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { onDestroy, onMount, tick } from 'svelte';
+	import { SvelteMap } from 'svelte/reactivity';
 	import { medicineIntakeWorkflow } from '$lib/workflows/medicineIntake.svelte';
 	import { showToast } from '$lib/stores/ui.svelte';
 	import Button from '$lib/components/Button.svelte';
@@ -36,7 +37,7 @@
 	let barcodeControls: { stop: () => void } | null = null;
 	let editingCode = $state(false);
 	let lookupInFlight = $state(false);
-	let lastScannedCodes = new Map<string, number>();
+	let lastScannedCodes = new SvelteMap<string, number>();
 
 	const kindLabels: Record<MedicinePhotoKind, string> = {
 		front: 'Label',
@@ -99,7 +100,7 @@
 				import('@zxing/browser'),
 				import('@zxing/library'),
 			]);
-			const hints = new Map();
+			const hints = new SvelteMap<any, any>();
 			hints.set(DecodeHintType.TRY_HARDER, true);
 			hints.set(DecodeHintType.POSSIBLE_FORMATS, [
 				BarcodeFormat.DATA_MATRIX,
@@ -121,10 +122,10 @@
 					facingMode: { ideal: 'environment' },
 					width: { ideal: 1920 },
 					height: { ideal: 1080 },
-					advanced: [{ focusMode: 'continuous' } as MediaTrackConstraintSet],
+					advanced: [{ focusMode: 'continuous' }],
 				},
 				audio: false,
-			} as MediaStreamConstraints;
+			};
 			barcodeControls = await barcodeReader.decodeFromConstraints(
 				constraints,
 				videoElement,
@@ -226,7 +227,8 @@
 
 	<h2 class="mb-1 text-h2 text-neutral-100">Medicine Mission</h2>
 	<p class="mb-4 text-body-sm text-neutral-400">
-		{workflow.state.locationPath} - scan each box, keep the evidence, then review only the candidates that need a decision.
+		{workflow.state.locationPath} - scan each box, keep the evidence, then review only the candidates
+		that need a decision.
 	</p>
 
 	<section class="mb-4 overflow-hidden rounded-xl border border-neutral-700 bg-neutral-950">
@@ -271,7 +273,9 @@
 				>
 					<track kind="captions" />
 				</video>
-				<div class="pointer-events-none absolute inset-x-8 top-1/2 h-24 -translate-y-1/2 rounded-lg border-2 border-primary-400/80 shadow-[0_0_0_999px_rgba(0,0,0,0.20)]"></div>
+				<div
+					class="pointer-events-none absolute inset-x-8 top-1/2 h-24 -translate-y-1/2 rounded-lg border-2 border-primary-400/80 shadow-[0_0_0_999px_rgba(0,0,0,0.20)]"
+				></div>
 				{#if cameraStarting}
 					<div class="absolute inset-0 flex items-center justify-center bg-neutral-950/50">
 						<p class="text-body-sm text-neutral-200">Starting camera...</p>
@@ -311,7 +315,7 @@
 					scannerStatus = '';
 				}}
 			>
-					<Pencil size={18} strokeWidth={1.5} />
+				<Pencil size={18} strokeWidth={1.5} />
 				<span>Type Code</span>
 			</Button>
 			{#if scannerMode || scannerStatus}
@@ -370,8 +374,8 @@
 			<div>
 				<h3 class="font-semibold text-neutral-100">Meds Found</h3>
 				<p class="text-caption text-neutral-500">
-					{workflow.state.queuedScans.length} captured, {workflow.state.queuedScans.filter(
-						(scan) => reviewable(scan.status)
+					{workflow.state.queuedScans.length} captured, {workflow.state.queuedScans.filter((scan) =>
+						reviewable(scan.status)
 					).length} reviewable
 				</p>
 			</div>

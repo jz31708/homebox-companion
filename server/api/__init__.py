@@ -11,8 +11,8 @@ from .items import router as items_router
 from .llm_profiles import router as llm_profiles_router
 from .locations import router as locations_router
 from .logs import router as logs_router
-from .medicines import router as medicines_router
 from .mcp import router as mcp_router
+from .medicines import router as medicines_router
 from .qr import router as qr_router
 from .tags import router as tags_router
 from .tools.audio import router as audio_router

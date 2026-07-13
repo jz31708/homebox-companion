@@ -2,9 +2,11 @@
 
 from .expiry import classify_expiry, normalize_expiry
 from .lookup import normalize_barcode
-from .models import MedicineReference, NoticeDocument, NoticeSection
+from .models import MedicineCatalogItem, MedicineDraft, MedicineReference, NoticeDocument, NoticeSection
 
 __all__ = [
+    "MedicineCatalogItem",
+    "MedicineDraft",
     "MedicineReference",
     "NoticeDocument",
     "NoticeSection",

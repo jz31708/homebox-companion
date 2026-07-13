@@ -8,9 +8,9 @@ import httpx
 from .reference_parser import parse_tsv
 
 BDPM_DOWNLOADS = {
-    "specialities": "https://base-donnees-publique.medicaments.gouv.fr/download/CIS_bdpm.txt",
-    "presentations": "https://base-donnees-publique.medicaments.gouv.fr/download/CIS_CIP_bdpm.txt",
-    "compositions": "https://base-donnees-publique.medicaments.gouv.fr/download/CIS_COMPO_bdpm.txt",
+    "specialities": "https://base-donnees-publique.medicaments.gouv.fr/index.php/download/file/CIS_bdpm.txt",
+    "presentations": "https://base-donnees-publique.medicaments.gouv.fr/index.php/download/file/CIS_CIP_bdpm.txt",
+    "compositions": "https://base-donnees-publique.medicaments.gouv.fr/index.php/download/file/CIS_COMPO_bdpm.txt",
 }
 
 

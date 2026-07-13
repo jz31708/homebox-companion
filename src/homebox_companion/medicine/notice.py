@@ -18,7 +18,7 @@ class _NoticeParser(HTMLParser):
         self.title = "Official medicine notice"
         self._skip = 0
 
-    def handle_starttag(self, tag, attrs):
+    def handle_starttag(self, tag, _attrs):
         if tag in {"script", "style", "nav", "header", "footer"}:
             self._skip += 1
 
@@ -41,7 +41,7 @@ def sanitize_notice_html(html: str, source_url: str) -> str:
 
 
 async def fetch_official_notice(cis: str) -> NoticeDocument:
-    url = f"{OFFICIAL_BASE}/extrait.php?specid={cis}"
+    url = f"{OFFICIAL_BASE}/medicament/{cis}/extrait"
     async with httpx.AsyncClient(timeout=httpx.Timeout(20), follow_redirects=True) as client:
         response = await client.get(url, headers={"User-Agent": "Homebox-Companion-Medicine/1.0"})
         response.raise_for_status()

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from calendar import monthrange
 from datetime import date, timedelta
+from typing import Literal
+
+ExpiryClassification = Literal["expired", "expiring", "current", "unknown"]
 
 
 def normalize_expiry(value: str | None) -> str | None:
@@ -25,7 +28,7 @@ def expiry_end(value: str) -> date:
     return date.fromisoformat(value)
 
 
-def classify_expiry(value: str | None, *, today: date | None = None) -> str:
+def classify_expiry(value: str | None, *, today: date | None = None) -> ExpiryClassification:
     if not value:
         return "unknown"
     today = today or date.today()
