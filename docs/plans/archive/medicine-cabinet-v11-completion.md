@@ -47,21 +47,23 @@ The browser loads all catalog pages with deduplication, abort propagation, a
 ## Live acceptance
 
 Live deployment smoke acceptance passed: the container is healthy and both
-direct and Caddy `/api/version` endpoints return `3.0.2`. Full disposable
-fixture acceptance is the remaining release evidence before declaring the
-Workboard state completed.
+direct and Caddy `/api/version` endpoints return `3.0.2`. Disposable fixture
+acceptance passed for manual/unmatched creation, location persistence, unknown
+remaining level, package photo availability, catalog/detail round-trip, and
+official BDPM sync with accented French source metadata.
 
 ## Pull request and deployment
 
-PR #6 was merged into `jz31708/homebox-companion:main`. Deployment used the
+PR #6 and the focused catalog hydration PR #9 were merged into
+`jz31708/homebox-companion:main`. Deployment used the
 merged main archive, preserved the runtime overlay and `data/`, and rebuilt
 without cache. Image digest:
-`sha256:65949691e32a1df9ec89a3de62b42515c96d55dd4df979369ab721059462ab6d`.
+`sha256:763d0a25a659e04fc31790f41438f65a991eda6f2bcd32b9981e3ffa5ac9078d`.
 
 ## Documentation
 
-The active plan is ready to archive after disposable acceptance. The optional
-Duelion upstream PR is not a blocker.
+The plan is archived after disposable acceptance. The optional Duelion
+upstream PR is not a blocker.
 
 ## Known limitations
 
@@ -71,26 +73,12 @@ medicine database were added.
 
 ## Workboard handoff
 
-- State: continuing
+- State: completed
 - Blocker: none
-- Next: run disposable acceptance and then archive this plan.
-- Safe to archive: no
+- Next: use the cabinet and collect real UX feedback.
+- Safe to archive: yes
 
-## Scope
-
-Immutable per-scan snapshots and photo ownership; reliable manual/unmatched
-saves; structured official notices and readable multi-page PDFs; conservative
-official purpose persistence; complete catalog pagination and sorting; direct
-external links; side-effect-free catalog reads; authenticated locked reference
-sync; and regression proof for every verified gap.
-
-## Baseline
-
-- Fork main baseline: `128c462`.
-- V1 post-acceptance fixes are present in the baseline.
-- Runtime and test evidence will be refreshed during the closeout.
-
-## Phase status
+## Phase status (historical implementation checklist)
 
 1. Baseline and living plan — in progress
 2. Immutable scan snapshots — pending
