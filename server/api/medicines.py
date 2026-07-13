@@ -57,6 +57,16 @@ def _field_payload(fields: dict[str, str]) -> list[dict[str, str]]:
     return [{"type": "text", "name": key, "textValue": value} for key, value in fields.items() if value]
 
 
+def _medicine_item_payload(medicine: MedicineDraft, tag_id: str) -> dict[str, Any]:
+    return {
+        "name": medicine.display_name.strip(),
+        "quantity": 1,
+        "description": "",
+        "parentId": medicine.location_id,
+        "tagIds": [str(tag_id)],
+    }
+
+
 def _field(fields: dict[str, str], name: str) -> str | None:
     value = fields.get(name)
     return value.strip() if value and value.strip() else None
@@ -193,13 +203,7 @@ async def create_medicine(
     item = await client.create_item(
         token,
         ItemCreate.model_validate(
-            {
-                "name": medicine.display_name.strip(),
-                "quantity": 1,
-                "description": "",
-                "parentId": medicine.location_id,
-                "tagIds": [str(tag["id"])],
-            }
+                _medicine_item_payload(medicine, str(tag["id"]))
         ),
     )
     item_id = str(item["id"])
