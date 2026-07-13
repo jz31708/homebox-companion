@@ -264,6 +264,8 @@ async def create_medicine(
                 token, item_id, pdf, f"official-notice-{reference.cis}.pdf", "application/pdf", "notice"
             )
             notice_attached = True
+            if not medicine.short_purpose and document.short_purpose:
+                await client.update_item(token, item_id, {"description": document.short_purpose})
             fields["Notice snapshot retrieved at"] = document.retrieved_at.isoformat()
             fields["Notice snapshot checksum"] = document.sha256 or ""
             await client.update_item(
