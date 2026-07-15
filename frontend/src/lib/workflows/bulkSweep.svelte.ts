@@ -170,6 +170,11 @@ class BulkSweepWorkflow {
 		return true;
 	}
 
+	async discardPersistedMission(): Promise<void> {
+		await bulkMissionDb.discardMission(this.missionId);
+		this.reset();
+	}
+
 	async addPhotos(files: File[]): Promise<void> {
 		if (!this._startedAtMs) this._startedAtMs = Date.now();
 		const now = Date.now();

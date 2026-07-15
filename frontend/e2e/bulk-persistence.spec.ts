@@ -53,6 +53,8 @@ test('Bulk Sweep persists Blob evidence and recovers after reload', async ({ pag
 	await expect(page.getByText('Photos (1)')).toBeVisible();
 	await page.reload();
 	await expect(page.getByText('Photos (1)')).toBeVisible();
+	await page.getByRole('button', { name: /discard this sweep/i }).click();
+	await expect(page.getByText('Photos (1)')).toHaveCount(0);
 	const stores = await page.evaluate(async () => {
 		const request = indexedDB.open('hbc-bulk-missions');
 		return await new Promise<string[]>((resolve) => {
@@ -71,4 +73,17 @@ test('Bulk Sweep persists Blob evidence and recovers after reload', async ({ pag
 			'meta',
 		])
 	);
+	const missionCount = await page.evaluate(async () => {
+		const request = indexedDB.open('hbc-bulk-missions');
+		return await new Promise<number>((resolve) => {
+			request.onsuccess = () => {
+				const all = request.result
+					.transaction('missions', 'readonly')
+					.objectStore('missions')
+					.getAll();
+				all.onsuccess = () => resolve(all.result.length);
+			};
+		});
+	});
+	expect(missionCount).toBe(0);
 });

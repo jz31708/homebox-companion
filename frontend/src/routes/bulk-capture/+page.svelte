@@ -3,6 +3,7 @@
 	import { resolve } from '$app/paths';
 	import { onDestroy, onMount } from 'svelte';
 	import { bulkSweepWorkflow } from '$lib/workflows/bulkSweep.svelte';
+	import * as bulkMissionDb from '$lib/services/bulkMissionDb';
 	import { showToast } from '$lib/stores/ui.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import StepIndicator from '$lib/components/StepIndicator.svelte';
@@ -21,6 +22,7 @@
 	let liveSupported = $state(false);
 
 	onMount(async () => {
+		await bulkMissionDb.cleanupStaleMissions();
 		if (!workflow.state.locationId) {
 			await workflow.recover();
 		}
@@ -143,6 +145,11 @@
 			</Button>
 		{/if}
 	</div>
+	{#if workflow.state.photos.length > 0}
+		<Button variant="secondary" full onclick={() => workflow.discardPersistedMission()}>
+			<span>Discard this sweep</span>
+		</Button>
+	{/if}
 	<input
 		bind:this={fileInput}
 		class="hidden"
