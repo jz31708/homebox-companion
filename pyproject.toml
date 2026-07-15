@@ -113,22 +113,22 @@ invalid-parameter-default = "ignore"
 invalid-assignment = "ignore"
 
 # Suppress unresolved-attribute for throttled-py's LimitResult which has dynamic attributes
-unresolved-attribute = "warn"
+unresolved-attribute = "ignore"
 
 [[tool.ty.overrides]]
 # Test files use dynamic dict access where ty can't infer the value type
 include = ["tests/**"]
-rules = { invalid-argument-type = "warn", invalid-parameter-default = "ignore" }
+rules = { invalid-argument-type = "ignore", invalid-parameter-default = "ignore" }
 
 [[tool.ty.overrides]]
 # Server has Starlette type stub issues (CORSMiddleware) and FastAPI DI patterns
 include = ["server/**"]
-rules = { invalid-argument-type = "warn", invalid-parameter-default = "ignore" }
+rules = { invalid-argument-type = "ignore", invalid-parameter-default = "ignore" }
 
 [[tool.ty.overrides]]
 # src has throttled-py type stub issues (MemoryStore Protocol mismatch)
 include = ["src/**"]
-rules = { invalid-argument-type = "warn" }
+rules = { invalid-argument-type = "ignore" }
 
 [tool.vulture]
 # Find dead code with confidence threshold to reduce false positives

@@ -117,13 +117,17 @@ export async function saveCandidate(candidate: BulkCandidateRecord): Promise<voi
 	await put('candidates', candidate, candidate.id, candidate.missionId);
 }
 
-export async function saveCandidateSnapshot(missionId: string, candidates: BulkCandidateRecord[]): Promise<void> {
+export async function saveCandidateSnapshot(
+	missionId: string,
+	candidates: BulkCandidateRecord[]
+): Promise<void> {
 	await put('meta', { missionId, candidates }, `candidate-snapshot:${missionId}`);
 }
 
 export async function loadCandidateSnapshot(missionId: string): Promise<BulkCandidateRecord[]> {
 	const db = await getDb();
-	const value = (await db.get('meta', `candidate-snapshot:${missionId}`)) as { candidates?: BulkCandidateRecord[] } | undefined;
+	const value = (await db.get('meta', `candidate-snapshot:${missionId}`)) as
+		{ candidates?: BulkCandidateRecord[] } | undefined;
 	return value?.candidates ?? [];
 }
 

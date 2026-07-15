@@ -99,7 +99,7 @@ class _PrinterHandler(http.server.BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length)
         headers = {k: v for k, v in self.headers.items()}
-        self.server.captured_requests.append(  # ty: ignore
+        self.server.captured_requests.append(
             PrintRequest(method="POST", path=self.path, headers=headers, body=body)
         )
         self.send_response(200)
@@ -120,7 +120,7 @@ class MockLabelPrinter:
         self.port = port
         self.requests: list[PrintRequest] = []
         self._server = http.server.HTTPServer(("", port), _PrinterHandler)
-        self._server.captured_requests = self.requests  # ty: ignore
+        self._server.captured_requests = self.requests
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:

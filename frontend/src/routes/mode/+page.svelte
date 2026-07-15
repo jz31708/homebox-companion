@@ -152,14 +152,18 @@
 					<PackageCheck size={22} strokeWidth={1.5} />
 				</div>
 				<h3 class="font-semibold text-neutral-200">Pack / Travel</h3>
-				<p class="text-caption text-neutral-500">Mission slot reserved for packing from Homebox locations.</p>
+				<p class="text-caption text-neutral-500">
+					Mission slot reserved for packing from Homebox locations.
+				</p>
 			</div>
 			<div class="rounded-xl border border-neutral-800 bg-neutral-900/70 p-4">
 				<div class="mb-2 text-neutral-400">
 					<Search size={22} strokeWidth={1.5} />
 				</div>
 				<h3 class="font-semibold text-neutral-200">Find / Ask</h3>
-				<p class="text-caption text-neutral-500">Mission slot reserved for searching and asking Homebox.</p>
+				<p class="text-caption text-neutral-500">
+					Mission slot reserved for searching and asking Homebox.
+				</p>
 			</div>
 		</div>
 	</div>

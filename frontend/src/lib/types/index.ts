@@ -154,11 +154,7 @@ export type ScanStatus =
 
 /** Status of individual item submission */
 export type ItemSubmissionStatus =
-	| 'pending'
-	| 'creating'
-	| 'success'
-	| 'partial_success'
-	| 'failed';
+	'pending' | 'creating' | 'success' | 'partial_success' | 'failed';
 
 /** Status of individual image analysis */
 export type ImageAnalysisStatus = 'pending' | 'analyzing' | 'success' | 'failed';
@@ -324,19 +320,10 @@ export interface BulkSweepState {
 
 export type MedicinePhotoKind = 'front' | 'barcode' | 'expiry' | 'doses' | 'notice' | 'other';
 export type MedicineIntakeStatus =
-	| 'idle'
-	| 'capturing'
-	| 'analyzing'
-	| 'reviewing'
-	| 'submitting'
-	| 'complete';
+	'idle' | 'capturing' | 'analyzing' | 'reviewing' | 'submitting' | 'complete';
 
 export type MedicineMissionKind =
-	| 'medicine_intake'
-	| 'room_sweep'
-	| 'single_item'
-	| 'pack_travel'
-	| 'find_homebox';
+	'medicine_intake' | 'room_sweep' | 'single_item' | 'pack_travel' | 'find_homebox';
 
 export type MedicineCandidateState =
 	| 'captured'

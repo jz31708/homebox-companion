@@ -4,7 +4,7 @@
 	import { resolve } from '$app/paths';
 	import * as db from '$lib/services/bulkMissionDb';
 	import { bulkSweepWorkflow } from '$lib/workflows/bulkSweep.svelte';
-import Button from '$lib/components/Button.svelte';
+	import Button from '$lib/components/Button.svelte';
 
 	let mission = $state<Awaited<ReturnType<typeof db.loadActiveMission>>>(null);
 	let dismissed = $state(false);
@@ -31,13 +31,24 @@ import Button from '$lib/components/Button.svelte';
 </script>
 
 {#if mission && !dismissed}
-	<div class="mb-4 rounded-xl border border-primary-500/50 bg-primary-500/10 p-4" data-testid="bulk-resume-banner">
+	<div
+		class="mb-4 rounded-xl border border-primary-500/50 bg-primary-500/10 p-4"
+		data-testid="bulk-resume-banner"
+	>
 		<div class="mb-2 font-semibold text-neutral-100">Resume apartment sweep</div>
-		<p class="mb-3 text-body-sm text-neutral-300">{mission.areaLabel} · {mission.photoIds.length} saved photo{mission.photoIds.length === 1 ? '' : 's'}</p>
+		<p class="mb-3 text-body-sm text-neutral-300">
+			{mission.areaLabel} · {mission.photoIds.length} saved photo{mission.photoIds.length === 1
+				? ''
+				: 's'}
+		</p>
 		<div class="flex flex-wrap gap-2">
 			<Button variant="primary" onclick={resume}>Resume</Button>
 			<Button variant="secondary" onclick={discard}>Discard</Button>
-			<button class="px-3 text-body-sm text-neutral-400 underline" type="button" onclick={() => (dismissed = true)}>Later</button>
+			<button
+				class="px-3 text-body-sm text-neutral-400 underline"
+				type="button"
+				onclick={() => (dismissed = true)}>Later</button
+			>
 		</div>
 	</div>
 {/if}

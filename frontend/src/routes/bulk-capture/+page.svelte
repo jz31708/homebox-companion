@@ -57,9 +57,17 @@
 			mediaRecorder = new MediaRecorder(stream);
 			mediaRecorder.ondataavailable = (event) => {
 				if (event.data.size > 0) {
-					const chunkStart = recordingStartedAt - (workflow.state.startedAtMs ?? recordingStartedAt) + audioChunkIndex * 30_000;
+					const chunkStart =
+						recordingStartedAt -
+						(workflow.state.startedAtMs ?? recordingStartedAt) +
+						audioChunkIndex * 30_000;
 					audioChunkIndex += 1;
-					void workflow.addAudioSegment(event.data, event.data.type || 'audio/webm', chunkStart, chunkStart + 30_000);
+					void workflow.addAudioSegment(
+						event.data,
+						event.data.type || 'audio/webm',
+						chunkStart,
+						chunkStart + 30_000
+					);
 				}
 			};
 			mediaRecorder.onstop = () => {
@@ -199,10 +207,16 @@
 		<section class="mb-4 rounded-xl border border-neutral-700 bg-neutral-900 p-4">
 			<h3 class="mb-2 font-semibold text-neutral-100">Narration segments</h3>
 			{#each workflow.state.audioSegments as segment (segment.id)}
-				<div class="flex items-center justify-between gap-3 border-t border-neutral-800 py-2 text-body-sm">
+				<div
+					class="flex items-center justify-between gap-3 border-t border-neutral-800 py-2 text-body-sm"
+				>
 					<span class="text-neutral-300">{segment.transcriptStatus}</span>
 					{#if segment.transcriptStatus === 'failed'}
-						<button class="text-blue-300 underline" type="button" onclick={() => workflow.retryAudioTranscription(segment.id)}>Retry</button>
+						<button
+							class="text-blue-300 underline"
+							type="button"
+							onclick={() => workflow.retryAudioTranscription(segment.id)}>Retry</button
+						>
 					{/if}
 				</div>
 			{/each}
@@ -270,9 +284,11 @@
 	{/if}
 </div>
 
-	<div class="fixed-bottom-panel p-4">
+<div class="fixed-bottom-panel p-4">
 	{#if workflow.state.status === 'analyzing'}
-		<Button variant="secondary" full onclick={() => workflow.cancelAnalysis()}>Cancel analysis</Button>
+		<Button variant="secondary" full onclick={() => workflow.cancelAnalysis()}
+			>Cancel analysis</Button
+		>
 	{:else if workflow.state.status === 'transcript_review'}
 		<Button variant="primary" full onclick={analyze}>
 			<Sparkles size={18} strokeWidth={1.5} />

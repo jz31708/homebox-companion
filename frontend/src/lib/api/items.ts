@@ -53,12 +53,17 @@ export const items = {
 		form.append('candidate', JSON.stringify(payload));
 		form.append('request_hash', requestHash);
 		form.append('idempotency_key', `${missionId}:${candidateId}`);
-		for (const attachment of attachments) form.append('attachments', attachment.file, `${attachment.photoId}|${attachment.file.name}`);
-		return requestFormData<BulkSubmissionResponse>(`/items/bulk/${missionId}/${candidateId}`, form, {
-			signal: options.signal,
-			timeout: 180_000,
-			errorMessage: 'Bulk candidate submission failed',
-		});
+		for (const attachment of attachments)
+			form.append('attachments', attachment.file, `${attachment.photoId}|${attachment.file.name}`);
+		return requestFormData<BulkSubmissionResponse>(
+			`/items/bulk/${missionId}/${candidateId}`,
+			form,
+			{
+				signal: options.signal,
+				timeout: 180_000,
+				errorMessage: 'Bulk candidate submission failed',
+			}
+		);
 	},
 
 	/**

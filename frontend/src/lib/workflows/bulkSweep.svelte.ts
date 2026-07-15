@@ -167,7 +167,9 @@ class BulkSweepWorkflow {
 			startMs: span.startOffsetMs ?? undefined,
 			endMs: span.endOffsetMs ?? undefined,
 		}));
-		const durableCandidates = bundle.candidates.length ? bundle.candidates : await bulkMissionDb.loadCandidateSnapshot(this.missionId);
+		const durableCandidates = bundle.candidates.length
+			? bundle.candidates
+			: await bulkMissionDb.loadCandidateSnapshot(this.missionId);
 		this._candidates = durableCandidates.map((candidate) => ({
 			id: candidate.id,
 			name: candidate.name,
@@ -182,14 +184,24 @@ class BulkSweepWorkflow {
 			notes: null,
 			custom_fields: {},
 			confidence: 0,
-			status: candidate.state === 'accepted' ? 'accepted' : candidate.state === 'rejected' ? 'rejected' : 'needs_review',
-			evidence: candidate.evidencePhotoIds.map((photoId) => ({ photoId, reason: 'Persisted candidate evidence' })),
+			status:
+				candidate.state === 'accepted'
+					? 'accepted'
+					: candidate.state === 'rejected'
+						? 'rejected'
+						: 'needs_review',
+			evidence: candidate.evidencePhotoIds.map((photoId) => ({
+				photoId,
+				reason: 'Persisted candidate evidence',
+			})),
 			sourcePhotoIds: candidate.evidencePhotoIds,
 			uncertaintyReasons: candidate.warningCodes,
 			duplicateCandidateIds: [],
 			duplicateExistingItemId: candidate.duplicateMatches[0]?.existingItemId ?? null,
 			suggestedAction: 'review',
-			originalFiles: candidate.evidencePhotoIds.map((photoId) => this._photos.find((photo) => photo.id === photoId)?.file).filter((file): file is File => Boolean(file)),
+			originalFiles: candidate.evidencePhotoIds
+				.map((photoId) => this._photos.find((photo) => photo.id === photoId)?.file)
+				.filter((file): file is File => Boolean(file)),
 		}));
 		this._status = this._status === 'analyzing' ? 'transcript_review' : this._status;
 		this._error = mission.lastError?.message ?? null;
@@ -291,7 +303,12 @@ class BulkSweepWorkflow {
 		void this.persistMission();
 	}
 
-	async addAudioSegment(blob: Blob, mimeType: string, startedAtMs: number, endedAtMs: number): Promise<string> {
+	async addAudioSegment(
+		blob: Blob,
+		mimeType: string,
+		startedAtMs: number,
+		endedAtMs: number
+	): Promise<string> {
 		const id = createId('a');
 		const segment: BulkAudioSegment = {
 			id,
@@ -301,24 +318,21 @@ class BulkSweepWorkflow {
 			endedAtMs,
 			transcriptStatus: 'pending',
 		};
-		this._audioSegments = [
-			...this._audioSegments,
-			segment,
-		];
+		this._audioSegments = [...this._audioSegments, segment];
 		await bulkMissionDb.addOrUpdateAudio({
-				schemaVersion: 1,
-				missionId: this.missionId,
-				id,
-				status: 'persisted',
-				blob: segment.file,
-				mimeType: segment.mimeType,
-				byteSize: segment.file.size,
-				startedAtMs,
-				endedAtMs,
-				rawTranscript: '',
-				error: null,
-				retryCount: 0,
-			});
+			schemaVersion: 1,
+			missionId: this.missionId,
+			id,
+			status: 'persisted',
+			blob: segment.file,
+			mimeType: segment.mimeType,
+			byteSize: segment.file.size,
+			startedAtMs,
+			endedAtMs,
+			rawTranscript: '',
+			error: null,
+			retryCount: 0,
+		});
 		await this.persistMission();
 		void this.transcribeAudioSegment(id);
 		return id;
@@ -329,9 +343,18 @@ class BulkSweepWorkflow {
 		if (!segment) return;
 		segment.transcriptStatus = 'transcribing';
 		await bulkMissionDb.addOrUpdateAudio({
-			schemaVersion: 1, missionId: this.missionId, id, status: 'transcribing', blob: segment.file,
-			mimeType: segment.mimeType, byteSize: segment.file.size, startedAtMs: segment.startedAtMs,
-			endedAtMs: segment.endedAtMs, rawTranscript: segment.rawTranscript ?? '', error: null, retryCount: 0,
+			schemaVersion: 1,
+			missionId: this.missionId,
+			id,
+			status: 'transcribing',
+			blob: segment.file,
+			mimeType: segment.mimeType,
+			byteSize: segment.file.size,
+			startedAtMs: segment.startedAtMs,
+			endedAtMs: segment.endedAtMs,
+			rawTranscript: segment.rawTranscript ?? '',
+			error: null,
+			retryCount: 0,
 		});
 		try {
 			const result = await audio.transcribe(segment.file, `${id}.webm`);
@@ -350,25 +373,55 @@ class BulkSweepWorkflow {
 					canonical: true,
 				};
 				await bulkMissionDb.saveSpan(storedSpan);
-				this._transcriptSpans = [...this._transcriptSpans, {
-					id: storedSpan.id, text: span.text, startMs: storedSpan.startOffsetMs,
-					endMs: storedSpan.endOffsetMs, sourceAudioSegmentId: id,
-				}];
+				this._transcriptSpans = [
+					...this._transcriptSpans,
+					{
+						id: storedSpan.id,
+						text: span.text,
+						startMs: storedSpan.startOffsetMs,
+						endMs: storedSpan.endOffsetMs,
+						sourceAudioSegmentId: id,
+					},
+				];
 			}
-			this._rawTranscriptText = [this._rawTranscriptText, result.text].filter(Boolean).join(' ').trim();
+			this._rawTranscriptText = [this._rawTranscriptText, result.text]
+				.filter(Boolean)
+				.join(' ')
+				.trim();
 			this._editedTranscriptText = this._rawTranscriptText;
 			await bulkMissionDb.addOrUpdateAudio({
-				schemaVersion: 1, missionId: this.missionId, id, status: 'done', blob: segment.file,
-				mimeType: segment.mimeType, byteSize: segment.file.size, startedAtMs: segment.startedAtMs,
-				endedAtMs: segment.endedAtMs, rawTranscript: result.text, error: null, retryCount: 0,
+				schemaVersion: 1,
+				missionId: this.missionId,
+				id,
+				status: 'done',
+				blob: segment.file,
+				mimeType: segment.mimeType,
+				byteSize: segment.file.size,
+				startedAtMs: segment.startedAtMs,
+				endedAtMs: segment.endedAtMs,
+				rawTranscript: result.text,
+				error: null,
+				retryCount: 0,
 			});
 		} catch (error) {
 			segment.transcriptStatus = 'failed';
 			await bulkMissionDb.addOrUpdateAudio({
-				schemaVersion: 1, missionId: this.missionId, id, status: 'failed', blob: segment.file,
-				mimeType: segment.mimeType, byteSize: segment.file.size, startedAtMs: segment.startedAtMs,
-				endedAtMs: segment.endedAtMs, rawTranscript: segment.rawTranscript ?? '',
-				error: { code: 'TRANSCRIPTION_FAILED', message: 'Server transcription failed', retryable: true }, retryCount: 1,
+				schemaVersion: 1,
+				missionId: this.missionId,
+				id,
+				status: 'failed',
+				blob: segment.file,
+				mimeType: segment.mimeType,
+				byteSize: segment.file.size,
+				startedAtMs: segment.startedAtMs,
+				endedAtMs: segment.endedAtMs,
+				rawTranscript: segment.rawTranscript ?? '',
+				error: {
+					code: 'TRANSCRIPTION_FAILED',
+					message: 'Server transcription failed',
+					retryable: true,
+				},
+				retryCount: 1,
 			});
 			log.warn('Audio transcription failed; evidence remains persisted for retry', error);
 		}
@@ -416,29 +469,110 @@ class BulkSweepWorkflow {
 		}
 		this.abortController = new AbortController();
 		this._status = 'analyzing';
-		this._analysisProgress = { current: 0, total: activePhotos.length, message: 'Preparing resumable photo chunks...' };
+		this._analysisProgress = {
+			current: 0,
+			total: activePhotos.length,
+			message: 'Preparing resumable photo chunks...',
+		};
 		this._error = null;
 		try {
 			const plans = planBulkObservationChunks(this.missionId, this._photos, this._transcriptSpans);
 			const bundle = await bulkMissionDb.loadMissionBundle(this.missionId);
-			const completed = new Set((bundle?.chunks ?? []).filter((chunk) => chunk.status === 'complete').map((chunk) => chunk.id));
+			const completed = new Set(
+				(bundle?.chunks ?? [])
+					.filter((chunk) => chunk.status === 'complete')
+					.map((chunk) => chunk.id)
+			);
 			const candidates: BulkCandidateItem[] = [];
 			const warnings: string[] = [];
 			for (const plan of plans) {
 				if (completed.has(plan.id)) continue;
-				await bulkMissionDb.saveChunk({ schemaVersion: 1, missionId: this.missionId, id: plan.id, status: 'analyzing', photoIds: plan.photoIds, transcriptSpanIds: plan.transcriptSpanIds, requestHash: plan.requestHash, observations: [], error: null });
+				await bulkMissionDb.saveChunk({
+					schemaVersion: 1,
+					missionId: this.missionId,
+					id: plan.id,
+					status: 'analyzing',
+					photoIds: plan.photoIds,
+					transcriptSpanIds: plan.transcriptSpanIds,
+					requestHash: plan.requestHash,
+					observations: [],
+					error: null,
+				});
 				try {
-					const result = await vision.bulkDetect({ photos: activePhotos.filter((photo) => plan.photoIds.includes(photo.id)), allPhotos: this._photos, locationId: this._locationId, locationName: this._locationName, locationPath: this._locationPath, parentItemId: this._parentItemId, editedTranscript: this._editedTranscriptText, transcriptSpans: this._transcriptSpans, photoIds: plan.photoIds }, { signal: this.abortController.signal });
+					const result = await vision.bulkDetect(
+						{
+							photos: activePhotos.filter((photo) => plan.photoIds.includes(photo.id)),
+							allPhotos: this._photos,
+							locationId: this._locationId,
+							locationName: this._locationName,
+							locationPath: this._locationPath,
+							parentItemId: this._parentItemId,
+							editedTranscript: this._editedTranscriptText,
+							transcriptSpans: this._transcriptSpans,
+							photoIds: plan.photoIds,
+						},
+						{ signal: this.abortController.signal }
+					);
 					candidates.push(...result.candidates);
 					warnings.push(...result.warnings);
-					await bulkMissionDb.saveChunk({ schemaVersion: 1, missionId: this.missionId, id: plan.id, status: 'complete', photoIds: plan.photoIds, transcriptSpanIds: plan.transcriptSpanIds, requestHash: plan.requestHash, observations: result.candidates.map((candidate) => ({ schemaVersion: 1, missionId: this.missionId, id: `${plan.id}:${candidate.id}`, photoIds: candidate.sourcePhotoIds, transcriptSpanIds: candidate.evidence.map((evidence) => evidence.transcriptSpanId).filter((id): id is string => Boolean(id)), name: candidate.name, evidence: candidate.evidence })), error: null });
+					await bulkMissionDb.saveChunk({
+						schemaVersion: 1,
+						missionId: this.missionId,
+						id: plan.id,
+						status: 'complete',
+						photoIds: plan.photoIds,
+						transcriptSpanIds: plan.transcriptSpanIds,
+						requestHash: plan.requestHash,
+						observations: result.candidates.map((candidate) => ({
+							schemaVersion: 1,
+							missionId: this.missionId,
+							id: `${plan.id}:${candidate.id}`,
+							photoIds: candidate.sourcePhotoIds,
+							transcriptSpanIds: candidate.evidence
+								.map((evidence) => evidence.transcriptSpanId)
+								.filter((id): id is string => Boolean(id)),
+							name: candidate.name,
+							evidence: candidate.evidence,
+						})),
+						error: null,
+					});
 				} catch (error) {
-					await bulkMissionDb.saveChunk({ schemaVersion: 1, missionId: this.missionId, id: plan.id, status: 'failed', photoIds: plan.photoIds, transcriptSpanIds: plan.transcriptSpanIds, requestHash: plan.requestHash, observations: [], error: { code: 'OBSERVATION_CHUNK_FAILED', message: error instanceof Error ? error.message : 'Observation failed', retryable: true } });
+					await bulkMissionDb.saveChunk({
+						schemaVersion: 1,
+						missionId: this.missionId,
+						id: plan.id,
+						status: 'failed',
+						photoIds: plan.photoIds,
+						transcriptSpanIds: plan.transcriptSpanIds,
+						requestHash: plan.requestHash,
+						observations: [],
+						error: {
+							code: 'OBSERVATION_CHUNK_FAILED',
+							message: error instanceof Error ? error.message : 'Observation failed',
+							retryable: true,
+						},
+					});
 					warnings.push(`Chunk ${plan.id} failed; retry it independently.`);
 				}
-				this._analysisProgress = { current: Math.min(activePhotos.length, this._analysisProgress.current + plan.photoIds.length), total: activePhotos.length, message: `Analyzed ${Math.min(activePhotos.length, this._analysisProgress.current + plan.photoIds.length)} of ${activePhotos.length} photos` };
+				this._analysisProgress = {
+					current: Math.min(
+						activePhotos.length,
+						this._analysisProgress.current + plan.photoIds.length
+					),
+					total: activePhotos.length,
+					message: `Analyzed ${Math.min(activePhotos.length, this._analysisProgress.current + plan.photoIds.length)} of ${activePhotos.length} photos`,
+				};
 			}
-			const result = { candidates, warnings, stats: { photo_count: activePhotos.length, ignored_photo_count: this._photos.length - activePhotos.length, candidate_count: candidates.length, low_confidence_count: candidates.filter((candidate) => candidate.confidence < 0.6).length } } as BulkDetectResponse;
+			const result = {
+				candidates,
+				warnings,
+				stats: {
+					photo_count: activePhotos.length,
+					ignored_photo_count: this._photos.length - activePhotos.length,
+					candidate_count: candidates.length,
+					low_confidence_count: candidates.filter((candidate) => candidate.confidence < 0.6).length,
+				},
+			} as BulkDetectResponse;
 			this._candidates = this.attachLocalFiles(candidates);
 			this._warnings = warnings;
 			this._stats = result.stats;
@@ -454,9 +588,13 @@ class BulkSweepWorkflow {
 					quantity: Math.max(1, candidate.quantity),
 					entityMode: candidate.quantity > 1 ? 'grouped' : 'individual',
 					quantityBasis: candidate.quantity > 1 ? 'unknown' : 'distinct_entities',
-					sourceObservationIds: candidate.sourcePhotoIds.map((photoId) => `${this.missionId}:photo:${photoId}`),
+					sourceObservationIds: candidate.sourcePhotoIds.map(
+						(photoId) => `${this.missionId}:photo:${photoId}`
+					),
 					evidencePhotoIds: candidate.sourcePhotoIds,
-					evidenceTranscriptSpanIds: candidate.evidence.map((ref) => ref.transcriptSpanId).filter((id): id is string => Boolean(id)),
+					evidenceTranscriptSpanIds: candidate.evidence
+						.map((ref) => ref.transcriptSpanId)
+						.filter((id): id is string => Boolean(id)),
 					blockerCodes: [],
 					warningCodes: candidate.quantity > 1 ? ['quantity_unconfirmed'] : [],
 					duplicateMatches: [],
@@ -497,7 +635,9 @@ class BulkSweepWorkflow {
 		this._candidates = this._candidates.map((candidate) =>
 			candidate.id === id ? { ...candidate, ...patch } : candidate
 		);
-		void this.persistCandidateRecords().catch((error) => log.error('Candidate persistence failed', error));
+		void this.persistCandidateRecords().catch((error) =>
+			log.error('Candidate persistence failed', error)
+		);
 	}
 
 	setCandidateStatus(id: string, status: BulkCandidateItem['status']): void {
@@ -511,7 +651,12 @@ class BulkSweepWorkflow {
 				schemaVersion: 1,
 				missionId: this.missionId,
 				id: candidate.id,
-				state: candidate.status === 'accepted' ? 'accepted' : candidate.status === 'rejected' ? 'rejected' : 'needs_review',
+				state:
+					candidate.status === 'accepted'
+						? 'accepted'
+						: candidate.status === 'rejected'
+							? 'rejected'
+							: 'needs_review',
 				reviewTier: candidate.uncertaintyReasons.length ? 'attention' : 'ready',
 				name: candidate.name,
 				quantity: Math.max(1, candidate.quantity),
@@ -519,9 +664,20 @@ class BulkSweepWorkflow {
 				quantityBasis: candidate.quantity > 1 ? 'unknown' : 'distinct_entities',
 				sourceObservationIds: candidate.sourcePhotoIds,
 				evidencePhotoIds: candidate.sourcePhotoIds,
-				evidenceTranscriptSpanIds: candidate.evidence.map((ref) => ref.transcriptSpanId).filter((span): span is string => Boolean(span)),
-				blockerCodes: [], warningCodes: candidate.uncertaintyReasons,
-				duplicateMatches: candidate.duplicateExistingItemId ? [{ existingItemId: candidate.duplicateExistingItemId, matchKind: 'advisory', reasons: ['Review required'] }] : [],
+				evidenceTranscriptSpanIds: candidate.evidence
+					.map((ref) => ref.transcriptSpanId)
+					.filter((span): span is string => Boolean(span)),
+				blockerCodes: [],
+				warningCodes: candidate.uncertaintyReasons,
+				duplicateMatches: candidate.duplicateExistingItemId
+					? [
+							{
+								existingItemId: candidate.duplicateExistingItemId,
+								matchKind: 'advisory',
+								reasons: ['Review required'],
+							},
+						]
+					: [],
 				createdHomeboxItemId: null,
 			};
 			const clone = JSON.parse(JSON.stringify(record)) as BulkCandidateRecord;
@@ -537,47 +693,110 @@ class BulkSweepWorkflow {
 
 	addManualCandidate(name: string): string {
 		const id = createId('manual');
-		this._candidates = [...this._candidates, {
-			id, name, quantity: 1, description: null, tag_ids: [], manufacturer: null,
-			model_number: null, serial_number: null, purchase_price: null, purchase_from: null,
-			notes: null, custom_fields: {}, confidence: 0, status: 'needs_review', evidence: [],
-			sourcePhotoIds: [], uncertaintyReasons: ['manual_candidate_needs_evidence'], duplicateCandidateIds: [],
-			duplicateExistingItemId: null, suggestedAction: 'review', originalFiles: [],
-		}];
-		void this.persistCandidateRecords().catch((error) => log.error('Candidate persistence failed', error));
+		this._candidates = [
+			...this._candidates,
+			{
+				id,
+				name,
+				quantity: 1,
+				description: null,
+				tag_ids: [],
+				manufacturer: null,
+				model_number: null,
+				serial_number: null,
+				purchase_price: null,
+				purchase_from: null,
+				notes: null,
+				custom_fields: {},
+				confidence: 0,
+				status: 'needs_review',
+				evidence: [],
+				sourcePhotoIds: [],
+				uncertaintyReasons: ['manual_candidate_needs_evidence'],
+				duplicateCandidateIds: [],
+				duplicateExistingItemId: null,
+				suggestedAction: 'review',
+				originalFiles: [],
+			},
+		];
+		void this.persistCandidateRecords().catch((error) =>
+			log.error('Candidate persistence failed', error)
+		);
 		return id;
 	}
 
-	mergeCandidates(ids: string[], quantity: number, quantityBasis: 'explicit_count' | 'user_confirmed'): void {
+	mergeCandidates(
+		ids: string[],
+		quantity: number,
+		quantityBasis: 'explicit_count' | 'user_confirmed'
+	): void {
 		if (quantity < 1 || ids.length < 2) return;
 		const selected = this._candidates.filter((candidate) => ids.includes(candidate.id));
 		if (selected.length < 2) return;
 		const first = selected[0];
-		const merged = { ...first, id: createId('merged'), quantity, status: 'needs_review' as const,
+		const merged = {
+			...first,
+			id: createId('merged'),
+			quantity,
+			status: 'needs_review' as const,
 			sourcePhotoIds: [...new Set(selected.flatMap((candidate) => candidate.sourcePhotoIds))],
 			evidence: selected.flatMap((candidate) => candidate.evidence),
-			uncertaintyReasons: [...new Set(selected.flatMap((candidate) => candidate.uncertaintyReasons).concat(`quantity_basis:${quantityBasis}`))] };
-		this._candidates = [...this._candidates.filter((candidate) => !ids.includes(candidate.id)), merged];
-		void this.persistCandidateRecords().catch((error) => log.error('Candidate persistence failed', error));
+			uncertaintyReasons: [
+				...new Set(
+					selected
+						.flatMap((candidate) => candidate.uncertaintyReasons)
+						.concat(`quantity_basis:${quantityBasis}`)
+				),
+			],
+		};
+		this._candidates = [
+			...this._candidates.filter((candidate) => !ids.includes(candidate.id)),
+			merged,
+		];
+		void this.persistCandidateRecords().catch((error) =>
+			log.error('Candidate persistence failed', error)
+		);
 	}
 
 	splitCandidate(id: string, firstQuantity: number, secondQuantity: number): void {
 		const candidate = this._candidates.find((entry) => entry.id === id);
 		if (!candidate || firstQuantity < 1 || secondQuantity < 1) return;
 		const split = [
-			{ ...candidate, id: createId('split'), quantity: firstQuantity, status: 'needs_review' as const },
-			{ ...candidate, id: createId('split'), quantity: secondQuantity, status: 'needs_review' as const },
+			{
+				...candidate,
+				id: createId('split'),
+				quantity: firstQuantity,
+				status: 'needs_review' as const,
+			},
+			{
+				...candidate,
+				id: createId('split'),
+				quantity: secondQuantity,
+				status: 'needs_review' as const,
+			},
 		];
 		this._candidates = [...this._candidates.filter((entry) => entry.id !== id), ...split];
-		void this.persistCandidateRecords().catch((error) => log.error('Candidate persistence failed', error));
+		void this.persistCandidateRecords().catch((error) =>
+			log.error('Candidate persistence failed', error)
+		);
 	}
 
 	resolveDuplicate(id: string, action: 'keep_new' | 'use_existing' | 'review'): void {
-		this._candidates = this._candidates.map((candidate) => candidate.id === id ? {
-			...candidate,
-			duplicateExistingItemId: action === 'use_existing' ? candidate.duplicateExistingItemId : null,
-			uncertaintyReasons: action === 'review' ? [...new Set([...candidate.uncertaintyReasons, 'duplicate_unresolved'])] : candidate.uncertaintyReasons.filter((reason) => reason !== 'duplicate_unresolved'),
-		} : candidate);
+		this._candidates = this._candidates.map((candidate) =>
+			candidate.id === id
+				? {
+						...candidate,
+						duplicateExistingItemId:
+							action === 'use_existing' ? candidate.duplicateExistingItemId : null,
+						uncertaintyReasons:
+							action === 'review'
+								? [...new Set([...candidate.uncertaintyReasons, 'duplicate_unresolved'])]
+								: candidate.uncertaintyReasons.filter(
+										(reason) => reason !== 'duplicate_unresolved'
+									),
+					}
+				: candidate
+		);
 		void this.persistCandidateRecords();
 	}
 
@@ -603,19 +822,64 @@ class BulkSweepWorkflow {
 			for (let i = 0; i < accepted.length; i++) {
 				const candidate = accepted[i];
 				const payload = {
-					name: candidate.name, quantity: candidate.quantity, description: candidate.description,
-					tag_ids: candidate.tag_ids, parent_id: this._parentItemId,
-					manufacturer: candidate.manufacturer, model_number: candidate.model_number,
-					serial_number: candidate.serial_number, purchase_price: candidate.purchase_price,
-					purchase_from: candidate.purchase_from, notes: candidate.notes,
+					name: candidate.name,
+					quantity: candidate.quantity,
+					description: candidate.description,
+					tag_ids: candidate.tag_ids,
+					parent_id: this._parentItemId,
+					manufacturer: candidate.manufacturer,
+					model_number: candidate.model_number,
+					serial_number: candidate.serial_number,
+					purchase_price: candidate.purchase_price,
+					purchase_from: candidate.purchase_from,
+					notes: candidate.notes,
 					custom_fields: candidate.custom_fields,
 				};
 				const requestHash = JSON.stringify(payload);
-				await bulkMissionDb.saveOutbox({ schemaVersion: 1, missionId: this.missionId, id: `${this.missionId}:${candidate.id}`, candidateId: candidate.id, requestHash, status: 'sending', evidencePhotoIds: candidate.sourcePhotoIds, homeboxItemId: null, lastError: null });
-				const attachments = candidate.sourcePhotoIds.map((photoId) => ({ photoId, file: this._photos.find((photo) => photo.id === photoId)?.file })).filter((entry): entry is { photoId: string; file: File } => Boolean(entry.file));
-				const response = await items.submitBulkCandidate(this.missionId, candidate.id, payload, attachments, requestHash, { signal: this.abortController?.signal });
+				await bulkMissionDb.saveOutbox({
+					schemaVersion: 1,
+					missionId: this.missionId,
+					id: `${this.missionId}:${candidate.id}`,
+					candidateId: candidate.id,
+					requestHash,
+					status: 'sending',
+					evidencePhotoIds: candidate.sourcePhotoIds,
+					homeboxItemId: null,
+					lastError: null,
+				});
+				const attachments = candidate.sourcePhotoIds
+					.map((photoId) => ({
+						photoId,
+						file: this._photos.find((photo) => photo.id === photoId)?.file,
+					}))
+					.filter((entry): entry is { photoId: string; file: File } => Boolean(entry.file));
+				const response = await items.submitBulkCandidate(
+					this.missionId,
+					candidate.id,
+					payload,
+					attachments,
+					requestHash,
+					{ signal: this.abortController?.signal }
+				);
 				candidate.status = response.status === 'complete' ? 'accepted' : 'needs_review';
-				await bulkMissionDb.saveOutbox({ schemaVersion: 1, missionId: this.missionId, id: `${this.missionId}:${candidate.id}`, candidateId: candidate.id, requestHash, status: response.status === 'complete' ? 'complete' : 'partial', evidencePhotoIds: candidate.sourcePhotoIds, homeboxItemId: response.homeboxItemId ?? null, lastError: response.status === 'complete' ? null : { code: 'ATTACHMENTS_PARTIAL', message: 'Some attachments need retry', retryable: true } });
+				await bulkMissionDb.saveOutbox({
+					schemaVersion: 1,
+					missionId: this.missionId,
+					id: `${this.missionId}:${candidate.id}`,
+					candidateId: candidate.id,
+					requestHash,
+					status: response.status === 'complete' ? 'complete' : 'partial',
+					evidencePhotoIds: candidate.sourcePhotoIds,
+					homeboxItemId: response.homeboxItemId ?? null,
+					lastError:
+						response.status === 'complete'
+							? null
+							: {
+									code: 'ATTACHMENTS_PARTIAL',
+									message: 'Some attachments need retry',
+									retryable: true,
+								},
+				});
 				this._submissionProgress = {
 					current: i + 1,
 					total: accepted.length,
