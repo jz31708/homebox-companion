@@ -63,8 +63,9 @@ phases:
     evidence: frontend/e2e/bulk-persistence.spec.ts, frontend/src/lib/components/BulkResumeBanner.svelte
   - id: 10
     name: automated-validation
-    status: pending
+    status: complete
     prompt: codex/11_PHASE_10_AUTOMATED_VALIDATION.md
+    evidence: tests/test_bulk_submission.py, frontend/e2e/bulk-persistence.spec.ts
   - id: 11
     name: deployment-disposable-acceptance
     status: pending

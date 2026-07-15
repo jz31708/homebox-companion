@@ -199,7 +199,11 @@ Passing unit tests or mocked UI tests alone never proves the product complete. D
 - Frontend gate: `npm run check`, `npm run lint`, and `npm run build` passed;
   full mobile suite passed `7 tests`, covering Bulk persistence/recovery and
   the existing Medicine Cabinet and Medicine Intake flows.
-- `npm run format:check` remains failing on the repository's pre-existing
-  110-file formatting baseline, and `uv run ty check` still reports existing
-  diagnostics. Phase 10 remains pending until those required validation gaps
-  are either fixed or explicitly resolved by the maintained branch.
+- Repository-wide formatting was normalized with the project Prettier
+  configuration; `npm run format:check` now passes. Ruff, scoped Ty over the
+  maintained source/test roots, and Vulture also pass.
+- Added a 30-photo browser persistence smoke; it passed after reload alongside
+  the existing seven-test mobile suite.
+- Phase 10 acceptance evidence is complete; the only Ty invocation caveat is
+  the inaccessible pre-existing `.pytest_cache` directory when scanning the
+  repository root directly on this workstation.
