@@ -30,6 +30,7 @@ export interface BulkMissionRecord {
 	locationId: string;
 	parentItemId: string | null;
 	areaLabel: string;
+	locationPath?: string;
 	photoIds: string[];
 	audioSegmentIds: string[];
 	transcriptSpanIds: string[];
