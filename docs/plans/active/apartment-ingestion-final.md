@@ -35,7 +35,7 @@ These failures are baseline evidence, not phase completion evidence. They must b
 |---:|---|---|
 | 0 | Baseline and truth | complete after this gate |
 | 1 | Durable domain contracts | complete |
-| 2 | Blob-backed mission persistence | pending |
+| 2 | Blob-backed mission persistence | complete |
 | 3 | Fast in-page capture | pending |
 | 4 | Dependable narration | pending |
 | 5 | Resumable observation analysis | pending |
@@ -75,3 +75,15 @@ Passing unit tests or mocked UI tests alone never proves the product complete. D
 - Frontend gate: `npm run check`, `npm run lint`, and `npm run build` passed.
 - The repository-wide Prettier check remains a documented Phase 0 baseline
   failure; the new contract file is formatted.
+
+## Phase 2 evidence (2026-07-15)
+
+- IndexedDB persistence uses separate stores and direct Blob/File values.
+- Capture acknowledgement waits for photo and mission writes.
+- `recover()` restores location, photo Blobs, audio Blobs, transcript spans, and
+  interrupted analysis status; stale missions are cleaned up and discard removes
+  all mission records.
+- Mobile Playwright gate: `1 passed` in `e2e/bulk-persistence.spec.ts`.
+- The browser gate verified capture, reload recovery, required store creation,
+  discard, and zero remaining mission records. The runner waited for an actual
+  HTTP 200 preview response before launching Playwright.

@@ -23,8 +23,9 @@ phases:
     evidence: tests/test_bulk_contracts.py
   - id: 2
     name: blob-backed-mission-persistence
-    status: pending
+    status: complete
     prompt: codex/03_PHASE_2_PERSISTENCE.md
+    evidence: frontend/e2e/bulk-persistence.spec.ts
   - id: 3
     name: fast-in-page-capture
     status: pending
