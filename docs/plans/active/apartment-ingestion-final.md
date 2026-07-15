@@ -36,7 +36,7 @@ These failures are baseline evidence, not phase completion evidence. They must b
 | 0 | Baseline and truth | complete after this gate |
 | 1 | Durable domain contracts | complete |
 | 2 | Blob-backed mission persistence | complete |
-| 3 | Fast in-page capture | pending |
+| 3 | Fast in-page capture | complete |
 | 4 | Dependable narration | pending |
 | 5 | Resumable observation analysis | pending |
 | 6 | Conservative fusion, quantity, duplicates | pending |
@@ -87,3 +87,12 @@ Passing unit tests or mocked UI tests alone never proves the product complete. D
 - The browser gate verified capture, reload recovery, required store creation,
   discard, and zero remaining mission records. The runner waited for an actual
   HTTP 200 preview response before launching Playwright.
+
+## Phase 3 evidence (2026-07-15)
+
+- Added persistent rear-camera capture with `playsinline`, lifecycle cleanup,
+  permission fallback, bounded 1920px JPEG preprocessing, and torch attempt.
+- Capture waits for Blob persistence before acknowledgement; file-input fallback
+  remains available.
+- Mobile Playwright gate: `2 passed`, covering offline capture plus reload,
+  discard, and denied-camera fallback.

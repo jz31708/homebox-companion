@@ -201,7 +201,9 @@
 
 	<div class="mb-4 flex items-center justify-between">
 		<h3 class="font-semibold text-neutral-100">Photos ({workflow.state.photos.length})</h3>
-		<span class="text-caption text-neutral-500">Ignored photos are kept out of analysis</span>
+		<span class="text-caption text-neutral-500"
+			>{workflow.state.photos.filter((photo) => !photo.ignored).length} ready · offline-safe</span
+		>
 	</div>
 
 	<div class="grid grid-cols-2 gap-3">
@@ -219,20 +221,10 @@
 						P{String(index).padStart(3, '0')}
 					</span>
 				</div>
-				<div class="space-y-2 p-3">
-					<input
-						class="input-sm"
-						placeholder="Group label"
-						value={photo.groupLabel}
-						oninput={(event) =>
-							workflow.updatePhoto(photo.id, { groupLabel: event.currentTarget.value })}
-					/>
-					<input
-						class="input-sm"
-						placeholder="Quick note"
-						value={photo.note}
-						oninput={(event) => workflow.updatePhoto(photo.id, { note: event.currentTarget.value })}
-					/>
+				<div class="flex items-center justify-between gap-2 p-3">
+					<span class="text-caption text-neutral-500"
+						>{photo.ignored ? 'Ignored' : 'Saved locally'}</span
+					>
 					<div class="flex items-center justify-between gap-2">
 						<label class="flex items-center gap-2 text-body-sm text-neutral-300">
 							<input
