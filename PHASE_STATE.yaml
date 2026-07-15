@@ -43,8 +43,9 @@ phases:
     evidence: tests/test_bulk_observation.py, frontend/e2e/bulk-persistence.spec.ts
   - id: 6
     name: conservative-fusion-quantity-duplicates
-    status: pending
+    status: complete
     prompt: codex/07_PHASE_6_FUSION_DUPLICATES.md
+    evidence: tests/test_bulk_fusion.py, src/homebox_companion/tools/vision/bulk_fusion.py
   - id: 7
     name: final-review-board
     status: pending

@@ -20,7 +20,9 @@ from homebox_companion import (
 from homebox_companion import (
     correct_item as llm_correct_item,
 )
+from homebox_companion.tools.vision.bulk_contracts import Candidate
 from homebox_companion.tools.vision.bulk_detector import detect_bulk_sweep
+from homebox_companion.tools.vision.bulk_fusion import fuse_observations
 from homebox_companion.tools.vision.bulk_models import (
     BulkDetectResponse,
     BulkObservation,
@@ -60,6 +62,21 @@ from ...schemas.vision import (
 from ...services.duplicate_checker import DuplicateChecker
 
 router = APIRouter()
+
+
+@router.post("/bulk-fuse", response_model=list[Candidate])
+async def bulk_fuse(payload: dict[str, object]) -> list[Candidate]:
+    """Fuse persisted observations using conservative, evidence-first rules."""
+    mission_id = str(payload.get("missionId") or "mission")
+    observations = payload.get("observations")
+    if not isinstance(observations, list) or not observations:
+        raise HTTPException(status_code=400, detail="At least one observation is required")
+    transcript = str(payload.get("transcript") or "")
+    existing = payload.get("existingItems")
+    existing_items = existing if isinstance(existing, list) else []
+    allowed = payload.get("allowedTagIds")
+    allowed_tag_ids = {str(tag) for tag in allowed} if isinstance(allowed, list) else None
+    return fuse_observations(mission_id, observations, transcript, existing_items, allowed_tag_ids)
 
 
 # Limit concurrent CPU-intensive compression to available cores.

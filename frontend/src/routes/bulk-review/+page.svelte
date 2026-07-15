@@ -41,16 +41,10 @@
 			class="mb-4 rounded-xl border border-neutral-700 bg-neutral-900 p-4 text-body-sm text-neutral-300"
 		>
 			{workflow.state.stats.candidate_count} candidates from {workflow.state.stats.photo_count} photos.
-			{#if workflow.state.stats.low_confidence_count > 0}
-				<span class="text-warning-300">{workflow.state.stats.low_confidence_count} need care.</span>
-			{/if}
 		</div>
 	{/if}
 
 	<div class="mb-4 flex gap-2">
-		<Button variant="secondary" onclick={() => workflow.acceptHighConfidence()}
-			>Accept high confidence</Button
-		>
 		<Button
 			variant="secondary"
 			onclick={() =>
@@ -74,7 +68,8 @@
 							<Package size={18} strokeWidth={1.5} class="text-neutral-400" />
 							<h3 class="truncate font-semibold text-neutral-100">{candidate.name}</h3>
 						</div>
-						<p class="text-caption text-neutral-500">
+						<p class="text-caption text-neutral-500">Review status: {candidate.status} · Qty {candidate.quantity}</p>
+						<p class="hidden text-caption text-neutral-500">
 							Confidence {Math.round(candidate.confidence * 100)}% · Qty {candidate.quantity}
 						</p>
 					</div>

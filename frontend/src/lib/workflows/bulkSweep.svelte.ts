@@ -3,6 +3,7 @@ import { resolve } from '$app/paths';
 import { audio, items, vision } from '$lib/api';
 import * as bulkMissionDb from '$lib/services/bulkMissionDb';
 import { planBulkObservationChunks } from '$lib/services/bulkAnalysisPlanner';
+import type { BulkCandidateRecord } from '$lib/types/bulkDomain';
 import { workflowLogger as log } from '$lib/utils/logger';
 import type {
 	BulkAudioSegment,
@@ -396,6 +397,28 @@ class BulkSweepWorkflow {
 			this._candidates = this.attachLocalFiles(candidates);
 			this._warnings = warnings;
 			this._stats = result.stats;
+			await bulkMissionDb.saveCandidates(
+				this.missionId,
+				candidates.map((candidate): BulkCandidateRecord => ({
+					schemaVersion: 1,
+					missionId: this.missionId,
+					id: candidate.id,
+					state: candidate.status === 'accepted' ? 'accepted' : 'needs_review',
+					reviewTier: candidate.uncertaintyReasons.length ? 'attention' : 'ready',
+					name: candidate.name,
+					quantity: Math.max(1, candidate.quantity),
+					entityMode: candidate.quantity > 1 ? 'grouped' : 'individual',
+					quantityBasis: candidate.quantity > 1 ? 'unknown' : 'distinct_entities',
+					sourceObservationIds: candidate.sourcePhotoIds.map((photoId) => `${this.missionId}:photo:${photoId}`),
+					evidencePhotoIds: candidate.sourcePhotoIds,
+					evidenceTranscriptSpanIds: candidate.evidence.map((ref) => ref.transcriptSpanId).filter((id): id is string => Boolean(id)),
+					blockerCodes: [],
+					warningCodes: candidate.quantity > 1 ? ['quantity_unconfirmed'] : [],
+					duplicateMatches: [],
+					createdHomeboxItemId: null,
+				}))
+			);
+			await this.persistMission();
 			this._status = 'reviewing';
 			return result;
 		} catch (error) {
@@ -537,7 +560,7 @@ class BulkSweepWorkflow {
 				audioSegmentIds: this._audioSegments.map((audio) => audio.id),
 				transcriptSpanIds: this._transcriptSpans.map((span) => span.id),
 				observationChunkIds: [],
-				candidateIds: [],
+				candidateIds: this._candidates.map((candidate) => candidate.id),
 				outboxOperationIds: [],
 				chunkSize: 6,
 				lastError: this._error ? { code: 'WORKFLOW', message: this._error, retryable: true } : null,
