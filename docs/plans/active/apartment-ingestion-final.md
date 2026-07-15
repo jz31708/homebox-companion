@@ -188,3 +188,18 @@ Passing unit tests or mocked UI tests alone never proves the product complete. D
 - Mobile Playwright gate: `5 passed` in `e2e/bulk-persistence.spec.ts`, including
   reload/offline persistence, denied camera, no browser SpeechRecognition,
   resumable chunk failure, and durable review recovery.
+
+## Phase 10 validation checkpoint (2026-07-15)
+
+- Backend focused gate: `19 passed` across contracts, transcription,
+  observation, fusion, and submission, including an endpoint-level partial
+  attachment retry test that verifies one Homebox item and retry-only behavior.
+- Backend full suite: `229 passed, 35 deselected` with the repository's default
+  live-test deselection.
+- Frontend gate: `npm run check`, `npm run lint`, and `npm run build` passed;
+  full mobile suite passed `7 tests`, covering Bulk persistence/recovery and
+  the existing Medicine Cabinet and Medicine Intake flows.
+- `npm run format:check` remains failing on the repository's pre-existing
+  110-file formatting baseline, and `uv run ty check` still reports existing
+  diagnostics. Phase 10 remains pending until those required validation gaps
+  are either fixed or explicitly resolved by the maintained branch.
