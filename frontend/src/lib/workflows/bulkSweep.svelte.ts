@@ -2,6 +2,7 @@ import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 import { items, vision } from '$lib/api';
 import * as bulkMissionDb from '$lib/services/bulkMissionDb';
+import { planBulkObservationChunks } from '$lib/services/bulkAnalysisPlanner';
 import { workflowLogger as log } from '$lib/utils/logger';
 import type {
 	BulkAudioSegment,
@@ -313,25 +314,31 @@ class BulkSweepWorkflow {
 		}
 		this.abortController = new AbortController();
 		this._status = 'analyzing';
-		this._analysisProgress = { current: 1, total: 4, message: 'Preparing sweep...' };
+		this._analysisProgress = { current: 0, total: activePhotos.length, message: 'Preparing resumable photo chunks...' };
 		this._error = null;
 		try {
-			const result = await vision.bulkDetect(
-				{
-					photos: activePhotos,
-					allPhotos: this._photos,
-					locationId: this._locationId,
-					locationName: this._locationName,
-					locationPath: this._locationPath,
-					parentItemId: this._parentItemId,
-					editedTranscript: this._editedTranscriptText,
-					transcriptSpans: this._transcriptSpans,
-				},
-				{ signal: this.abortController.signal }
-			);
-			this._analysisProgress = { current: 4, total: 4, message: 'Preparing review...' };
-			this._candidates = this.attachLocalFiles(result.candidates);
-			this._warnings = result.warnings;
+			const plans = planBulkObservationChunks(this.missionId, this._photos, this._transcriptSpans);
+			const bundle = await bulkMissionDb.loadMissionBundle(this.missionId);
+			const completed = new Set((bundle?.chunks ?? []).filter((chunk) => chunk.status === 'complete').map((chunk) => chunk.id));
+			const candidates: BulkCandidateItem[] = [];
+			const warnings: string[] = [];
+			for (const plan of plans) {
+				if (completed.has(plan.id)) continue;
+				await bulkMissionDb.saveChunk({ schemaVersion: 1, missionId: this.missionId, id: plan.id, status: 'analyzing', photoIds: plan.photoIds, transcriptSpanIds: plan.transcriptSpanIds, requestHash: plan.requestHash, observations: [], error: null });
+				try {
+					const result = await vision.bulkDetect({ photos: activePhotos.filter((photo) => plan.photoIds.includes(photo.id)), allPhotos: this._photos, locationId: this._locationId, locationName: this._locationName, locationPath: this._locationPath, parentItemId: this._parentItemId, editedTranscript: this._editedTranscriptText, transcriptSpans: this._transcriptSpans, photoIds: plan.photoIds }, { signal: this.abortController.signal });
+					candidates.push(...result.candidates);
+					warnings.push(...result.warnings);
+					await bulkMissionDb.saveChunk({ schemaVersion: 1, missionId: this.missionId, id: plan.id, status: 'complete', photoIds: plan.photoIds, transcriptSpanIds: plan.transcriptSpanIds, requestHash: plan.requestHash, observations: result.candidates.map((candidate) => ({ schemaVersion: 1, missionId: this.missionId, id: `${plan.id}:${candidate.id}`, photoIds: candidate.sourcePhotoIds, transcriptSpanIds: candidate.evidence.map((evidence) => evidence.transcriptSpanId).filter((id): id is string => Boolean(id)), name: candidate.name, evidence: candidate.evidence })), error: null });
+				} catch (error) {
+					await bulkMissionDb.saveChunk({ schemaVersion: 1, missionId: this.missionId, id: plan.id, status: 'failed', photoIds: plan.photoIds, transcriptSpanIds: plan.transcriptSpanIds, requestHash: plan.requestHash, observations: [], error: { code: 'OBSERVATION_CHUNK_FAILED', message: error instanceof Error ? error.message : 'Observation failed', retryable: true } });
+					warnings.push(`Chunk ${plan.id} failed; retry it independently.`);
+				}
+				this._analysisProgress = { current: Math.min(activePhotos.length, this._analysisProgress.current + plan.photoIds.length), total: activePhotos.length, message: `Analyzed ${Math.min(activePhotos.length, this._analysisProgress.current + plan.photoIds.length)} of ${activePhotos.length} photos` };
+			}
+			const result = { candidates, warnings, stats: { photo_count: activePhotos.length, ignored_photo_count: this._photos.length - activePhotos.length, candidate_count: candidates.length, low_confidence_count: candidates.filter((candidate) => candidate.confidence < 0.6).length } } as BulkDetectResponse;
+			this._candidates = this.attachLocalFiles(candidates);
+			this._warnings = warnings;
 			this._stats = result.stats;
 			this._status = 'reviewing';
 			return result;
@@ -347,6 +354,10 @@ class BulkSweepWorkflow {
 			this.abortController = null;
 			this._analysisProgress = null;
 		}
+	}
+
+	cancelAnalysis(): void {
+		this.abortController?.abort();
 	}
 
 	private attachLocalFiles(candidates: BulkCandidateItem[]): BulkCandidateItem[] {
@@ -429,10 +440,6 @@ class BulkSweepWorkflow {
 		} finally {
 			this._submissionProgress = null;
 		}
-	}
-
-	cancelAnalysis(): void {
-		this.abortController?.abort();
 	}
 
 	reset(): void {
