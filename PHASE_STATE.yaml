@@ -1,76 +1,55 @@
 schema_version: 1
-project: homebox-companion-final-apartment-ingestion
+project: homebox-companion-phase11-remediation
 repository: jz31708/homebox-companion
 base_branch: main
-audited_head: feae4eba30e7a6aae95c8f6b0266c55607259cb7
+audited_branch: feature/final-apartment-ingestion
+audited_deployed_commit: 76a3b921d5646cd25d4f986a206eb6ee259c2190
+audited_main: 2c2ac9d305e03bafdd2866bee9d9bb78a2172d0f
+verdict: fail
+physical_pilot: blocked
 
 rules:
-  execute_one_phase_at_a_time: true
-  update_only_after_acceptance: true
-  physical_pilot_required_for_final: true
-  no_documentation_only_completion: true
+  one_phase_per_pass: true
+  independent_review_required: true
+  no_self_certification: true
+  no_test_weakening: true
+  redeployment_required: true
 
 phases:
   - id: 0
-    name: baseline-and-truth
-    status: complete
-    prompt: codex/01_PHASE_0_BASELINE.md
-    evidence: docs/plans/active/apartment-ingestion-final.md
+    name: branch-truth-and-runtime-containment
+    status: in_progress
+    prompt: audit-remediation/codex/01_BRANCH_TRUTH_AND_CONTAINMENT.md
+    evidence: docs/plans/active/apartment-ingestion-audit-remediation.md
   - id: 1
-    name: durable-domain-contracts
-    status: complete
-    prompt: codex/02_PHASE_1_DOMAIN_CONTRACTS.md
-    evidence: tests/test_bulk_contracts.py
+    name: camera-context-and-lossless-persistence
+    status: pending
+    prompt: audit-remediation/codex/02_CAMERA_CONTEXT_PERSISTENCE.md
   - id: 2
-    name: blob-backed-mission-persistence
-    status: complete
-    prompt: codex/03_PHASE_2_PERSISTENCE.md
-    evidence: frontend/e2e/bulk-persistence.spec.ts
+    name: narration-security-and-runtime
+    status: pending
+    prompt: audit-remediation/codex/03_NARRATION_SECURITY_RUNTIME.md
   - id: 3
-    name: fast-in-page-capture
-    status: complete
-    prompt: codex/04_PHASE_3_CAPTURE_UX.md
-    evidence: frontend/e2e/bulk-persistence.spec.ts
+    name: observation-and-fusion-production-path
+    status: pending
+    prompt: audit-remediation/codex/04_OBSERVE_FUSE_PIPELINE.md
   - id: 4
-    name: dependable-narration
-    status: complete
-    prompt: codex/05_PHASE_4_NARRATION.md
-    evidence: tests/test_audio_transcription.py, frontend/e2e/bulk-persistence.spec.ts
+    name: review-and-candidate-fidelity
+    status: pending
+    prompt: audit-remediation/codex/05_REVIEW_CANDIDATE_FIDELITY.md
   - id: 5
-    name: resumable-observation-analysis
-    status: complete
-    prompt: codex/06_PHASE_5_OBSERVATION.md
-    evidence: tests/test_bulk_observation.py, frontend/e2e/bulk-persistence.spec.ts
+    name: submission-idempotency-and-recovery
+    status: pending
+    prompt: audit-remediation/codex/06_SUBMISSION_IDEMPOTENCY.md
   - id: 6
-    name: conservative-fusion-quantity-duplicates
-    status: complete
-    prompt: codex/07_PHASE_6_FUSION_DUPLICATES.md
-    evidence: tests/test_bulk_fusion.py, src/homebox_companion/tools/vision/bulk_fusion.py
+    name: automated-validation-and-independent-audit
+    status: pending
+    prompt: audit-remediation/codex/07_VALIDATION_AUDIT.md
   - id: 7
-    name: final-review-board
-    status: complete
-    prompt: codex/08_PHASE_7_REVIEW.md
-    evidence: frontend/e2e/bulk-persistence.spec.ts
+    name: redeploy-and-disposable-reacceptance
+    status: pending
+    prompt: audit-remediation/codex/08_REDEPLOY_REACCEPT.md
   - id: 8
-    name: idempotent-candidate-submission
-    status: complete
-    prompt: codex/09_PHASE_8_SUBMISSION.md
-    evidence: tests/test_bulk_submission.py, src/homebox_companion/tools/vision/bulk_submission.py
-  - id: 9
-    name: mission-continuity
-    status: complete
-    prompt: codex/10_PHASE_9_CONTINUITY.md
-    evidence: frontend/e2e/bulk-persistence.spec.ts, frontend/src/lib/components/BulkResumeBanner.svelte
-  - id: 10
-    name: automated-validation
-    status: complete
-    prompt: codex/11_PHASE_10_AUTOMATED_VALIDATION.md
-    evidence: tests/test_bulk_submission.py, frontend/e2e/bulk-persistence.spec.ts
-  - id: 11
-    name: deployment-disposable-acceptance
-    status: pending
-    prompt: codex/12_PHASE_11_DEPLOY_ACCEPT.md
-  - id: 12
     name: physical-pilot-closeout
-    status: pending
-    prompt: codex/13_PHASE_12_PHYSICAL_PILOT_CLOSEOUT.md
+    status: blocked
+    prompt: audit-remediation/codex/09_PHYSICAL_PILOT.md
