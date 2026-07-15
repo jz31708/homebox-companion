@@ -1,0 +1,66 @@
+schema_version: 1
+project: homebox-companion-final-apartment-ingestion
+repository: jz31708/homebox-companion
+base_branch: main
+audited_head: feae4eba30e7a6aae95c8f6b0266c55607259cb7
+
+rules:
+  execute_one_phase_at_a_time: true
+  update_only_after_acceptance: true
+  physical_pilot_required_for_final: true
+  no_documentation_only_completion: true
+
+phases:
+  - id: 0
+    name: baseline-and-truth
+    status: complete
+    prompt: codex/01_PHASE_0_BASELINE.md
+    evidence: docs/plans/active/apartment-ingestion-final.md
+  - id: 1
+    name: durable-domain-contracts
+    status: pending
+    prompt: codex/02_PHASE_1_DOMAIN_CONTRACTS.md
+  - id: 2
+    name: blob-backed-mission-persistence
+    status: pending
+    prompt: codex/03_PHASE_2_PERSISTENCE.md
+  - id: 3
+    name: fast-in-page-capture
+    status: pending
+    prompt: codex/04_PHASE_3_CAPTURE_UX.md
+  - id: 4
+    name: dependable-narration
+    status: pending
+    prompt: codex/05_PHASE_4_NARRATION.md
+  - id: 5
+    name: resumable-observation-analysis
+    status: pending
+    prompt: codex/06_PHASE_5_OBSERVATION.md
+  - id: 6
+    name: conservative-fusion-quantity-duplicates
+    status: pending
+    prompt: codex/07_PHASE_6_FUSION_DUPLICATES.md
+  - id: 7
+    name: final-review-board
+    status: pending
+    prompt: codex/08_PHASE_7_REVIEW.md
+  - id: 8
+    name: idempotent-candidate-submission
+    status: pending
+    prompt: codex/09_PHASE_8_SUBMISSION.md
+  - id: 9
+    name: mission-continuity
+    status: pending
+    prompt: codex/10_PHASE_9_CONTINUITY.md
+  - id: 10
+    name: automated-validation
+    status: pending
+    prompt: codex/11_PHASE_10_AUTOMATED_VALIDATION.md
+  - id: 11
+    name: deployment-disposable-acceptance
+    status: pending
+    prompt: codex/12_PHASE_11_DEPLOY_ACCEPT.md
+  - id: 12
+    name: physical-pilot-closeout
+    status: pending
+    prompt: codex/13_PHASE_12_PHYSICAL_PILOT_CLOSEOUT.md
