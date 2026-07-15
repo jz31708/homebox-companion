@@ -127,3 +127,19 @@ Passing unit tests or mocked UI tests alone never proves the product complete. D
 - Frontend gate: `npm run check`, `npm run lint`, and `npm run build` passed.
 - Mobile Playwright gate: `4 passed`, including a two-chunk partial failure
   followed by reload and verification that the completed chunk was not resent.
+
+## Phase 6 evidence (2026-07-15)
+
+- Added text-only `/tools/vision/bulk-fuse` and deterministic evidence-first
+  fusion with explicit entity modes and quantity bases.
+- Removed normalized-name quantity summing from the maintained fusion path:
+  repeated individual evidence remains quantity one, while grouped counts
+  require explicit or distinct-entity evidence.
+- Duplicate probes distinguish exact serial, manufacturer/model, and
+  same-location-name advisory matches; duplicates never auto-submit and exact
+  serial matches remain unresolved for review.
+- Candidate review tiers and blockers are persisted, invalid tags are filtered,
+  and user-facing review no longer offers scalar-confidence auto-acceptance.
+- Backend gate: `5 passed` in `tests/test_bulk_fusion.py`, plus all Phase 1/5
+  contract and observation tests (`14 passed`).
+- Frontend gate: `npm run check`, `npm run lint`, and `npm run build` passed.
