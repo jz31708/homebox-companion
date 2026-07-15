@@ -60,10 +60,19 @@ async function serializedWrite<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 async function put<T>(store: StoreName, value: T, id: string, missionId?: string): Promise<void> {
-	return serializedWrite(async () => {
-		const db = await getDb();
-		await db.put(store, value, missionId ? key(missionId, id) : id);
-	});
+	try {
+		return await serializedWrite(async () => {
+			const db = await getDb();
+			await db.put(store, value, missionId ? key(missionId, id) : id);
+		});
+	} catch (error) {
+		if (error instanceof DOMException && error.name === 'QuotaExceededError') {
+			throw new Error('BULK_STORAGE_QUOTA_EXCEEDED: earlier evidence was preserved', {
+				cause: error,
+			});
+		}
+		throw error;
+	}
 }
 
 export async function saveMission(mission: BulkMissionRecord): Promise<void> {
