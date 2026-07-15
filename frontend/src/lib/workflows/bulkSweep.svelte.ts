@@ -788,6 +788,8 @@ class BulkSweepWorkflow {
 						...candidate,
 						duplicateExistingItemId:
 							action === 'use_existing' ? candidate.duplicateExistingItemId : null,
+						suggestedAction: action === 'use_existing' ? 'merge' : candidate.suggestedAction,
+						status: action === 'use_existing' ? 'accepted' : candidate.status,
 						uncertaintyReasons:
 							action === 'review'
 								? [...new Set([...candidate.uncertaintyReasons, 'duplicate_unresolved'])]
@@ -834,6 +836,9 @@ class BulkSweepWorkflow {
 					purchase_from: candidate.purchase_from,
 					notes: candidate.notes,
 					custom_fields: candidate.custom_fields,
+					existing_item_id:
+						candidate.suggestedAction === 'merge' ? candidate.duplicateExistingItemId : null,
+					existing_item_action: candidate.suggestedAction === 'merge' ? 'increase_quantity' : null,
 				};
 				const requestHash = JSON.stringify(payload);
 				await bulkMissionDb.saveOutbox({
