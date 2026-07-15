@@ -206,3 +206,22 @@ test('Bulk review filters, edits, adds manual candidates, and reloads durably', 
 	await expect(page.getByText('Living router')).toBeVisible();
 	await expect(page.getByText('Manual lamp')).toBeVisible();
 });
+
+test('Bulk Sweep keeps a 30-photo mission responsive and durable', async ({ page }) => {
+	await mockBulkApi(page);
+	await page.goto('/location');
+	await page.getByPlaceholder('Search all locations...').fill('Living');
+	await page.getByRole('button', { name: /Living room/i }).click();
+	await page.getByRole('button', { name: /continue to capture/i }).click();
+	await page.getByRole('button', { name: /bulk sweep/i }).click();
+	await page.locator('input[type="file"]').setInputFiles(
+		Array.from({ length: 30 }, (_, index) => ({
+			name: `large-${index}.jpg`,
+			mimeType: 'image/jpeg',
+			buffer: Buffer.from(`large-photo-${index}`),
+		}))
+	);
+	await expect(page.getByText('Photos (30)')).toBeVisible();
+	await page.reload();
+	await expect(page.getByText('Photos (30)')).toBeVisible();
+});
