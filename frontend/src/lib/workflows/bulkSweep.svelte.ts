@@ -124,6 +124,50 @@ class BulkSweepWorkflow {
 	setParentItem(id: string | null, name: string | null): void {
 		this._parentItemId = id;
 		this._parentItemName = name;
+		void this.persistMission();
+	}
+
+	async recover(): Promise<boolean> {
+		const mission = await bulkMissionDb.loadActiveMission();
+		if (!mission) return false;
+		const bundle = await bulkMissionDb.loadMissionBundle(mission.id);
+		if (!bundle) return false;
+		this.reset();
+		this.missionId = mission.id;
+		this._status = mission.status === 'complete' ? 'idle' : (mission.status as BulkSweepStatus);
+		this._locationId = mission.locationId;
+		this._locationName = mission.areaLabel;
+		this._parentItemId = mission.parentItemId;
+		this._startedAtMs = Date.now();
+		this._photos = bundle.photos.map((photo) => ({
+			id: photo.id,
+			file: new File([photo.blob], photo.filename, { type: photo.mimeType }),
+			previewUrl: URL.createObjectURL(photo.blob),
+			takenAtMs: photo.takenAtMs,
+			sessionOffsetMs: photo.sessionOffsetMs,
+			note: photo.note,
+			groupLabel: photo.groupLabel,
+			ignored: photo.ignored,
+		}));
+		this._audioSegments = bundle.audio.map((audio) => ({
+			id: audio.id,
+			file: audio.blob,
+			mimeType: audio.mimeType,
+			startedAtMs: audio.startedAtMs,
+			endedAtMs: audio.endedAtMs,
+			transcriptStatus:
+				audio.status === 'done' ? 'done' : audio.status === 'failed' ? 'failed' : 'pending',
+			rawTranscript: audio.rawTranscript,
+		}));
+		this._transcriptSpans = bundle.spans.map((span) => ({
+			id: span.id,
+			text: span.text,
+			startMs: span.startOffsetMs ?? undefined,
+			endMs: span.endOffsetMs ?? undefined,
+		}));
+		this._status = this._status === 'analyzing' ? 'transcript_review' : this._status;
+		this._error = mission.lastError?.message ?? null;
+		return true;
 	}
 
 	addPhotos(files: File[]): void {

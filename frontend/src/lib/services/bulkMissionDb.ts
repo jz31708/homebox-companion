@@ -127,7 +127,40 @@ export async function listRecoverableMissions(): Promise<BulkMissionRecord[]> {
 }
 
 export async function storageEstimate(): Promise<StorageEstimate | null> {
+	requireBrowser();
 	return navigator.storage?.estimate ? navigator.storage.estimate() : null;
+}
+
+export interface BulkMissionBundle {
+	mission: BulkMissionRecord;
+	photos: BulkPhotoRecord[];
+	audio: BulkAudioRecord[];
+	spans: BulkTranscriptSpanRecord[];
+	chunks: BulkObservationChunkRecord[];
+	candidates: BulkCandidateRecord[];
+	outbox: BulkOutboxOperationRecord[];
+}
+
+async function missionRecords<T>(store: StoreName, missionId: string): Promise<T[]> {
+	const db = await getDb();
+	const values = (await db.getAll(store)) as T[];
+	return values.filter((value) => (value as { missionId?: string }).missionId === missionId);
+}
+
+export async function loadMissionBundle(missionId: string): Promise<BulkMissionBundle | null> {
+	requireBrowser();
+	const db = await getDb();
+	const mission = (await db.get('missions', missionId)) as BulkMissionRecord | undefined;
+	if (!mission) return null;
+	return {
+		mission,
+		photos: await missionRecords<BulkPhotoRecord>('photos', missionId),
+		audio: await missionRecords<BulkAudioRecord>('audio', missionId),
+		spans: await missionRecords<BulkTranscriptSpanRecord>('spans', missionId),
+		chunks: await missionRecords<BulkObservationChunkRecord>('chunks', missionId),
+		candidates: await missionRecords<BulkCandidateRecord>('candidates', missionId),
+		outbox: await missionRecords<BulkOutboxOperationRecord>('outbox', missionId),
+	};
 }
 
 export async function discardMission(missionId: string): Promise<void> {
