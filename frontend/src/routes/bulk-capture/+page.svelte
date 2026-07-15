@@ -9,6 +9,7 @@
 	import StepIndicator from '$lib/components/StepIndicator.svelte';
 	import BackLink from '$lib/components/BackLink.svelte';
 	import AnalysisProgressBar from '$lib/components/AnalysisProgressBar.svelte';
+	import BulkCameraCapture from '$lib/components/BulkCameraCapture.svelte';
 	import { Camera, Mic, MicOff, Trash2, ImagePlus, FileText, Sparkles } from 'lucide-svelte';
 
 	const workflow = bulkSweepWorkflow;
@@ -40,6 +41,12 @@
 		if (!files?.length) return;
 		await workflow.addPhotos(Array.from(files));
 		if (fileInput) fileInput.value = '';
+	}
+
+	async function addCapturedPhoto(event: CustomEvent<Blob>) {
+		await workflow.addPhotos([
+			new File([event.detail], `capture-${Date.now()}.jpg`, { type: 'image/jpeg' }),
+		]);
 	}
 
 	async function startNarration() {
@@ -127,6 +134,9 @@
 
 	<h2 class="mb-1 text-h2 text-neutral-100">Bulk Sweep</h2>
 	<p class="mb-4 text-body-sm text-neutral-400">{workflow.state.locationPath}</p>
+	<BulkCameraCapture
+		oncapture={(blob: Blob) => addCapturedPhoto(new CustomEvent('capture', { detail: blob }))}
+	/>
 
 	<div class="mb-4 grid grid-cols-2 gap-3">
 		<Button variant="primary" onclick={() => fileInput.click()}>
