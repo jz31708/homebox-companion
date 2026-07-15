@@ -157,7 +157,19 @@
 				{#if candidate.duplicateExistingItemId}
 					<div class="mb-3 flex items-center justify-between rounded-lg border border-warning-500/50 p-2 text-caption text-warning-200">
 						<span>Possible existing Homebox item</span>
-						<button type="button" class="underline" onclick={() => workflow.resolveDuplicate(candidate.id, 'keep_new')}>Keep new</button>
+						<div class="flex gap-3">
+							<button
+								type="button"
+								class="underline"
+								onclick={() => workflow.resolveDuplicate(candidate.id, 'use_existing')}
+								>Increase existing quantity</button
+							>
+							<button
+								type="button"
+								class="underline"
+								onclick={() => workflow.resolveDuplicate(candidate.id, 'keep_new')}>Keep new</button
+							>
+						</div>
 					</div>
 				{/if}
 

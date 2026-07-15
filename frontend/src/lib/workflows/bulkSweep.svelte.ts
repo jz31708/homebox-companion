@@ -517,11 +517,23 @@ class BulkSweepWorkflow {
 	}
 
 	resolveDuplicate(id: string, action: 'keep_new' | 'use_existing' | 'review'): void {
-		this._candidates = this._candidates.map((candidate) => candidate.id === id ? {
-			...candidate,
-			duplicateExistingItemId: action === 'use_existing' ? candidate.duplicateExistingItemId : null,
-			uncertaintyReasons: action === 'review' ? [...new Set([...candidate.uncertaintyReasons, 'duplicate_unresolved'])] : candidate.uncertaintyReasons.filter((reason) => reason !== 'duplicate_unresolved'),
-		} : candidate);
+		this._candidates = this._candidates.map((candidate) =>
+			candidate.id === id
+				? {
+						...candidate,
+						duplicateExistingItemId:
+							action === 'use_existing' ? candidate.duplicateExistingItemId : null,
+						suggestedAction: action === 'use_existing' ? 'merge' : candidate.suggestedAction,
+						status: action === 'use_existing' ? 'accepted' : candidate.status,
+						uncertaintyReasons:
+							action === 'review'
+								? [...new Set([...candidate.uncertaintyReasons, 'duplicate_unresolved'])]
+								: candidate.uncertaintyReasons.filter(
+										(reason) => reason !== 'duplicate_unresolved'
+									),
+					}
+				: candidate
+		);
 		void this.persistCandidateRecords();
 	}
 
@@ -553,6 +565,9 @@ class BulkSweepWorkflow {
 					serial_number: candidate.serial_number, purchase_price: candidate.purchase_price,
 					purchase_from: candidate.purchase_from, notes: candidate.notes,
 					custom_fields: candidate.custom_fields,
+					existing_item_id:
+						candidate.suggestedAction === 'merge' ? candidate.duplicateExistingItemId : null,
+					existing_item_action: candidate.suggestedAction === 'merge' ? 'increase_quantity' : null,
 				};
 				const requestHash = JSON.stringify(payload);
 				await bulkMissionDb.saveOutbox({ schemaVersion: 1, missionId: this.missionId, id: `${this.missionId}:${candidate.id}`, candidateId: candidate.id, requestHash, status: 'sending', evidencePhotoIds: candidate.sourcePhotoIds, homeboxItemId: null, lastError: null });

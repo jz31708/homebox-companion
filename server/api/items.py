@@ -39,16 +39,31 @@ async def submit_bulk_candidate(
     item_id = reservation.get("homebox_item_id")
     if not item_id:
         try:
-            item = await client.create_item(
-                token,
-                ItemCreate(
-                    name=payload["name"],
-                    quantity=int(payload.get("quantity", 1)),
-                    description=payload.get("description") or "",
-                    parent_id=payload.get("parent_id"),  # ty: ignore[unknown-argument]
-                    tag_ids=payload.get("tag_ids"),  # ty: ignore[unknown-argument]
-                ),
-            )
+            existing_item_id = payload.get("existing_item_id")
+            if existing_item_id and payload.get("existing_item_action") == "increase_quantity":
+                existing = await client.get_item(token, str(existing_item_id))
+                item = await client.update_item(
+                    token,
+                    str(existing_item_id),
+                    {
+                        "name": existing.get("name"),
+                        "description": existing.get("description", ""),
+                        "quantity": int(existing.get("quantity", 1)) + int(payload.get("quantity", 1)),
+                        "parentId": existing.get("parent", {}).get("id"),
+                        "tagIds": [tag.get("id") for tag in existing.get("tags", []) if tag.get("id")],
+                    },
+                )
+            else:
+                item = await client.create_item(
+                    token,
+                    ItemCreate(
+                        name=payload["name"],
+                        quantity=int(payload.get("quantity", 1)),
+                        description=payload.get("description") or "",
+                        parent_id=payload.get("parent_id"),  # ty: ignore[unknown-argument]
+                        tag_ids=payload.get("tag_ids"),  # ty: ignore[unknown-argument]
+                    ),
+                )
             item_id = item.get("id")
             if not item_id:
                 raise RuntimeError("Homebox did not return an item ID")
