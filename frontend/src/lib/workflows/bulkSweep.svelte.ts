@@ -14,7 +14,6 @@ import type {
 	BulkSweepStatus,
 	BulkTranscriptSource,
 	BulkTranscriptSpan,
-	BatchCreateRequest,
 	Progress,
 } from '$lib/types';
 
@@ -579,31 +578,22 @@ class BulkSweepWorkflow {
 		this._status = 'submitting';
 		this._submissionProgress = { current: 0, total: accepted.length, message: 'Creating items...' };
 		try {
-			const request: BatchCreateRequest = {
-				location_id: this._locationId,
-				items: accepted.map((candidate) => ({
-					name: candidate.name,
-					quantity: candidate.quantity,
-					description: candidate.description,
-					tag_ids: candidate.tag_ids,
-					parent_id: this._parentItemId,
-					manufacturer: candidate.manufacturer,
-					model_number: candidate.model_number,
-					serial_number: candidate.serial_number,
-					purchase_price: candidate.purchase_price,
-					purchase_from: candidate.purchase_from,
-					notes: candidate.notes,
-					custom_fields: candidate.custom_fields,
-				})),
-			};
-			const created = await items.create(request);
-			for (let i = 0; i < created.created.length; i++) {
-				const item = created.created[i];
+			for (let i = 0; i < accepted.length; i++) {
 				const candidate = accepted[i];
-				if (!item?.id || !candidate?.originalFiles?.length) continue;
-				for (const file of candidate.originalFiles.slice(0, 4)) {
-					await items.uploadAttachment(item.id, file);
-				}
+				const payload = {
+					name: candidate.name, quantity: candidate.quantity, description: candidate.description,
+					tag_ids: candidate.tag_ids, parent_id: this._parentItemId,
+					manufacturer: candidate.manufacturer, model_number: candidate.model_number,
+					serial_number: candidate.serial_number, purchase_price: candidate.purchase_price,
+					purchase_from: candidate.purchase_from, notes: candidate.notes,
+					custom_fields: candidate.custom_fields,
+				};
+				const requestHash = JSON.stringify(payload);
+				await bulkMissionDb.saveOutbox({ schemaVersion: 1, missionId: this.missionId, id: `${this.missionId}:${candidate.id}`, candidateId: candidate.id, requestHash, status: 'sending', evidencePhotoIds: candidate.sourcePhotoIds, homeboxItemId: null, lastError: null });
+				const attachments = candidate.sourcePhotoIds.map((photoId) => ({ photoId, file: this._photos.find((photo) => photo.id === photoId)?.file })).filter((entry): entry is { photoId: string; file: File } => Boolean(entry.file));
+				const response = await items.submitBulkCandidate(this.missionId, candidate.id, payload, attachments, requestHash, { signal: this.abortController?.signal });
+				candidate.status = response.status === 'complete' ? 'accepted' : 'needs_review';
+				await bulkMissionDb.saveOutbox({ schemaVersion: 1, missionId: this.missionId, id: `${this.missionId}:${candidate.id}`, candidateId: candidate.id, requestHash, status: response.status === 'complete' ? 'complete' : 'partial', evidencePhotoIds: candidate.sourcePhotoIds, homeboxItemId: response.homeboxItemId ?? null, lastError: response.status === 'complete' ? null : { code: 'ATTACHMENTS_PARTIAL', message: 'Some attachments need retry', retryable: true } });
 				this._submissionProgress = {
 					current: i + 1,
 					total: accepted.length,
