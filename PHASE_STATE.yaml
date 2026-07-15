@@ -53,8 +53,9 @@ phases:
     evidence: frontend/e2e/bulk-persistence.spec.ts
   - id: 8
     name: idempotent-candidate-submission
-    status: pending
+    status: complete
     prompt: codex/09_PHASE_8_SUBMISSION.md
+    evidence: tests/test_bulk_submission.py, src/homebox_companion/tools/vision/bulk_submission.py
   - id: 9
     name: mission-continuity
     status: pending

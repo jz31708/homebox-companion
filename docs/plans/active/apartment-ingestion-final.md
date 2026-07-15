@@ -74,6 +74,21 @@ Passing unit tests or mocked UI tests alone never proves the product complete. D
   existing Bulk tests.
 - Frontend gate: `npm run check`, `npm run lint`, and `npm run build` passed.
 
+## Phase 8 evidence (2026-07-15)
+
+- Added a durable SQLite submission ledger with schema bootstrap for operation
+  idempotency, request-hash conflict detection, immediate Homebox item IDs,
+  and per-photo attachment results.
+- Added `/items/bulk/{mission_id}/{candidate_id}`. It creates one candidate per
+  operation key, maps uploads by `photoId|filename`, skips completed
+  attachments on retry, and preserves created items when attachments fail.
+- Frontend submission is sequential and outbox-backed; each candidate has an
+  independent operation and attachment set, so a failed candidate does not
+  invalidate successful candidates or rely on response array position.
+- Backend gate: `2 passed` in `tests/test_bulk_submission.py`; ruff passed for
+  ledger and endpoint code.
+- Frontend gate: `npm run check`, `npm run lint`, and `npm run build` passed.
+
 ## Phase 7 evidence (2026-07-15)
 
 - Review board now has attention/ready/accepted/submitted/rejected/all tabs,
