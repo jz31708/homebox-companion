@@ -18,8 +18,9 @@ phases:
     evidence: docs/plans/active/apartment-ingestion-final.md
   - id: 1
     name: durable-domain-contracts
-    status: pending
+    status: complete
     prompt: codex/02_PHASE_1_DOMAIN_CONTRACTS.md
+    evidence: tests/test_bulk_contracts.py
   - id: 2
     name: blob-backed-mission-persistence
     status: pending

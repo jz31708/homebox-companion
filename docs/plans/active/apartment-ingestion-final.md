@@ -34,7 +34,7 @@ These failures are baseline evidence, not phase completion evidence. They must b
 | Phase | Purpose | Status |
 |---:|---|---|
 | 0 | Baseline and truth | complete after this gate |
-| 1 | Durable domain contracts | pending |
+| 1 | Durable domain contracts | complete |
 | 2 | Blob-backed mission persistence | pending |
 | 3 | Fast in-page capture | pending |
 | 4 | Dependable narration | pending |
@@ -63,3 +63,15 @@ Passing unit tests or mocked UI tests alone never proves the product complete. D
 - Next: execute Phase 1 durable domain contracts.
 - Durable updates: `docs/current-state.md`, this active plan, and `PHASE_STATE.yaml` after commit.
 - Safe to archive: no
+
+## Phase 1 evidence (2026-07-15)
+
+- Added identity-safe frontend and backend mission, photo, audio, transcript,
+  observation, candidate, duplicate, outbox, error, and warning contracts.
+- Added deterministic chunk IDs/request hashes, evidence validation, quantity
+  invariants, and recovery normalization.
+- Focused backend gate: `8 passed` in `tests/test_bulk_contracts.py` and the
+  existing Bulk tests.
+- Frontend gate: `npm run check`, `npm run lint`, and `npm run build` passed.
+- The repository-wide Prettier check remains a documented Phase 0 baseline
+  failure; the new contract file is formatted.
