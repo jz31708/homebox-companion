@@ -33,8 +33,9 @@ phases:
     evidence: frontend/e2e/bulk-persistence.spec.ts
   - id: 4
     name: dependable-narration
-    status: pending
+    status: complete
     prompt: codex/05_PHASE_4_NARRATION.md
+    evidence: tests/test_audio_transcription.py, frontend/e2e/bulk-persistence.spec.ts
   - id: 5
     name: resumable-observation-analysis
     status: pending

@@ -96,3 +96,19 @@ Passing unit tests or mocked UI tests alone never proves the product complete. D
   remains available.
 - Mobile Playwright gate: `2 passed`, covering offline capture plus reload,
   discard, and denied-camera fallback.
+
+## Phase 4 evidence (2026-07-15)
+
+- Added configurable provider-neutral server transcription at
+  `/tools/audio/transcribe` with supported MIME validation, 25 MB limit,
+  timeout, safe provider errors, and canonical server timestamp spans.
+- MediaRecorder persists approximately 30-second chunks before upload; each
+  segment has durable persisted/transcribing/done/failed state and a retry
+  action. Server spans are stored with the originating audio segment ID.
+- Browser SpeechRecognition remains optional; microphone denial leaves the
+  manual transcript path available and captured audio is never silently
+  discarded.
+- Backend gate: `2 passed` in `tests/test_audio_transcription.py`.
+- Frontend gate: `npm run check`, `npm run lint`, and `npm run build` passed.
+- Mobile Playwright gate: `3 passed`, covering persistence/reload, denied
+  camera fallback, and narration without browser SpeechRecognition.

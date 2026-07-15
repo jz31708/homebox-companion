@@ -18,7 +18,7 @@
 	let mediaRecorder: MediaRecorder | null = null;
 	let speechRecognition: any = null;
 	let recordingStartedAt = 0;
-	let chunks: Blob[] = [];
+	let audioChunkIndex = 0;
 	let isRecording = $state(false);
 	let liveSupported = $state(false);
 
@@ -52,23 +52,20 @@
 	async function startNarration() {
 		try {
 			const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-			chunks = [];
+			audioChunkIndex = 0;
 			recordingStartedAt = Date.now();
 			mediaRecorder = new MediaRecorder(stream);
 			mediaRecorder.ondataavailable = (event) => {
-				if (event.data.size > 0) chunks.push(event.data);
+				if (event.data.size > 0) {
+					const chunkStart = recordingStartedAt - (workflow.state.startedAtMs ?? recordingStartedAt) + audioChunkIndex * 30_000;
+					audioChunkIndex += 1;
+					void workflow.addAudioSegment(event.data, event.data.type || 'audio/webm', chunkStart, chunkStart + 30_000);
+				}
 			};
 			mediaRecorder.onstop = () => {
-				const blob = new Blob(chunks, { type: mediaRecorder?.mimeType || 'audio/webm' });
-				workflow.addAudioSegment(
-					blob,
-					blob.type || 'audio/webm',
-					recordingStartedAt - (workflow.state.startedAtMs ?? recordingStartedAt),
-					Date.now() - (workflow.state.startedAtMs ?? Date.now())
-				);
 				stream.getTracks().forEach((track) => track.stop());
 			};
-			mediaRecorder.start();
+			mediaRecorder.start(30_000);
 			startSpeechRecognition();
 			isRecording = true;
 		} catch (error) {
@@ -198,6 +195,19 @@
 			</p>
 		{/if}
 	</section>
+	{#if workflow.state.audioSegments.length > 0}
+		<section class="mb-4 rounded-xl border border-neutral-700 bg-neutral-900 p-4">
+			<h3 class="mb-2 font-semibold text-neutral-100">Narration segments</h3>
+			{#each workflow.state.audioSegments as segment (segment.id)}
+				<div class="flex items-center justify-between gap-3 border-t border-neutral-800 py-2 text-body-sm">
+					<span class="text-neutral-300">{segment.transcriptStatus}</span>
+					{#if segment.transcriptStatus === 'failed'}
+						<button class="text-blue-300 underline" type="button" onclick={() => workflow.retryAudioTranscription(segment.id)}>Retry</button>
+					{/if}
+				</div>
+			{/each}
+		</section>
+	{/if}
 
 	<div class="mb-4 flex items-center justify-between">
 		<h3 class="font-semibold text-neutral-100">Photos ({workflow.state.photos.length})</h3>

@@ -1,6 +1,6 @@
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
-import { items, vision } from '$lib/api';
+import { audio, items, vision } from '$lib/api';
 import * as bulkMissionDb from '$lib/services/bulkMissionDb';
 import { workflowLogger as log } from '$lib/utils/logger';
 import type {
@@ -244,24 +244,24 @@ class BulkSweepWorkflow {
 		void this.persistMission();
 	}
 
-	addAudioSegment(blob: Blob, mimeType: string, startedAtMs: number, endedAtMs: number): void {
+	async addAudioSegment(blob: Blob, mimeType: string, startedAtMs: number, endedAtMs: number): Promise<string> {
+		const id = createId('a');
+		const segment: BulkAudioSegment = {
+			id,
+			file: blob,
+			mimeType,
+			startedAtMs,
+			endedAtMs,
+			transcriptStatus: 'pending',
+		};
 		this._audioSegments = [
 			...this._audioSegments,
-			{
-				id: createId('a'),
-				file: blob,
-				mimeType,
-				startedAtMs,
-				endedAtMs,
-				transcriptStatus: 'pending',
-			},
+			segment,
 		];
-		const segment = this._audioSegments.at(-1);
-		if (segment)
-			void bulkMissionDb.addOrUpdateAudio({
+		await bulkMissionDb.addOrUpdateAudio({
 				schemaVersion: 1,
 				missionId: this.missionId,
-				id: segment.id,
+				id,
 				status: 'persisted',
 				blob: segment.file,
 				mimeType: segment.mimeType,
@@ -272,7 +272,63 @@ class BulkSweepWorkflow {
 				error: null,
 				retryCount: 0,
 			});
-		void this.persistMission();
+		await this.persistMission();
+		void this.transcribeAudioSegment(id);
+		return id;
+	}
+
+	async transcribeAudioSegment(id: string): Promise<void> {
+		const segment = this._audioSegments.find((entry) => entry.id === id);
+		if (!segment) return;
+		segment.transcriptStatus = 'transcribing';
+		await bulkMissionDb.addOrUpdateAudio({
+			schemaVersion: 1, missionId: this.missionId, id, status: 'transcribing', blob: segment.file,
+			mimeType: segment.mimeType, byteSize: segment.file.size, startedAtMs: segment.startedAtMs,
+			endedAtMs: segment.endedAtMs, rawTranscript: segment.rawTranscript ?? '', error: null, retryCount: 0,
+		});
+		try {
+			const result = await audio.transcribe(segment.file, `${id}.webm`);
+			segment.transcriptStatus = 'done';
+			segment.rawTranscript = result.text;
+			for (const span of result.spans) {
+				const storedSpan = {
+					schemaVersion: 1 as const,
+					missionId: this.missionId,
+					id: `${id}_${span.id}`,
+					sourceAudioSegmentId: id,
+					text: span.text,
+					startOffsetMs: segment.startedAtMs + span.startMs,
+					endOffsetMs: segment.startedAtMs + span.endMs,
+					source: 'server' as const,
+					canonical: true,
+				};
+				await bulkMissionDb.saveSpan(storedSpan);
+				this._transcriptSpans = [...this._transcriptSpans, {
+					id: storedSpan.id, text: span.text, startMs: storedSpan.startOffsetMs,
+					endMs: storedSpan.endOffsetMs, sourceAudioSegmentId: id,
+				}];
+			}
+			this._rawTranscriptText = [this._rawTranscriptText, result.text].filter(Boolean).join(' ').trim();
+			this._editedTranscriptText = this._rawTranscriptText;
+			await bulkMissionDb.addOrUpdateAudio({
+				schemaVersion: 1, missionId: this.missionId, id, status: 'done', blob: segment.file,
+				mimeType: segment.mimeType, byteSize: segment.file.size, startedAtMs: segment.startedAtMs,
+				endedAtMs: segment.endedAtMs, rawTranscript: result.text, error: null, retryCount: 0,
+			});
+		} catch (error) {
+			segment.transcriptStatus = 'failed';
+			await bulkMissionDb.addOrUpdateAudio({
+				schemaVersion: 1, missionId: this.missionId, id, status: 'failed', blob: segment.file,
+				mimeType: segment.mimeType, byteSize: segment.file.size, startedAtMs: segment.startedAtMs,
+				endedAtMs: segment.endedAtMs, rawTranscript: segment.rawTranscript ?? '',
+				error: { code: 'TRANSCRIPTION_FAILED', message: 'Server transcription failed', retryable: true }, retryCount: 1,
+			});
+			log.warn('Audio transcription failed; evidence remains persisted for retry', error);
+		}
+	}
+
+	retryAudioTranscription(id: string): void {
+		void this.transcribeAudioSegment(id);
 	}
 
 	appendLiveTranscript(text: string, final = false): void {

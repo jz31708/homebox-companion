@@ -1,39 +1,60 @@
-"""Audio tool endpoints.
-
-Bulk Sweep prefers browser live transcription when available so the user can
-see and correct the transcript while capturing. This endpoint reserves the
-server-side contract for deployments that wire Whisper, Groq, or another
-transcription provider behind the app.
-"""
+"""Provider-neutral server transcription for Bulk Sweep narration."""
 
 from __future__ import annotations
 
+import json
 from typing import Annotated
 
+import httpx
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
+from homebox_companion.core.config import get_settings
+
 router = APIRouter()
+MAX_AUDIO_BYTES = 25 * 1024 * 1024
+SUPPORTED_MIME_TYPES = {
+    "audio/webm",
+    "audio/ogg",
+    "audio/wav",
+    "audio/mpeg",
+    "audio/mp4",
+    "audio/x-m4a",
+}
 
 
 @router.post("/transcribe")
-async def transcribe_audio(
-    audio: Annotated[UploadFile, File(...)],
-) -> dict[str, str]:
-    """Transcribe an uploaded audio segment.
-
-    The first implemented Bulk Sweep path keeps transcription local in the
-    browser via SpeechRecognition/webkitSpeechRecognition and sends the edited
-    transcript to analysis. Server transcription is intentionally explicit
-    rather than silently fake: homelab deployments can connect this route to
-    Whisper, Groq, or an OpenAI-compatible audio provider.
-    """
+async def transcribe_audio(audio: Annotated[UploadFile, File(...)]) -> dict[str, object]:
+    settings = get_settings()
     if not audio.filename:
         raise HTTPException(status_code=400, detail="Audio upload is missing a filename")
+    if audio.content_type not in SUPPORTED_MIME_TYPES:
+        raise HTTPException(status_code=415, detail="Unsupported audio MIME type")
+    payload = await audio.read(MAX_AUDIO_BYTES + 1)
+    if len(payload) > MAX_AUDIO_BYTES:
+        raise HTTPException(status_code=413, detail="Audio segment exceeds the 25 MB limit")
+    if not settings.transcription_enabled or not settings.effective_api_key:
+        raise HTTPException(status_code=503, detail="Server transcription is not configured")
 
-    raise HTTPException(
-        status_code=501,
-        detail=(
-            "Server audio transcription is not configured. "
-            "Use live browser transcription or typed notes, then edit the transcript before analysis."
-        ),
-    )
+    base = (settings.transcription_api_base or "https://api.openai.com/v1").rstrip("/")
+    headers = {"Authorization": f"Bearer {settings.effective_api_key}"}
+    files = {"file": (audio.filename, payload, audio.content_type)}
+    data = {"model": settings.transcription_model, "response_format": "verbose_json"}
+    try:
+        async with httpx.AsyncClient(timeout=settings.transcription_timeout) as client:
+            response = await client.post(f"{base}/audio/transcriptions", headers=headers, data=data, files=files)
+            response.raise_for_status()
+            result = response.json()
+    except (httpx.HTTPError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=502, detail="Transcription provider failed") from exc
+
+    spans = [
+        {
+            "id": f"server_span_{index}",
+            "text": segment.get("text", ""),
+            "startMs": int(segment.get("start", 0) * 1000),
+            "endMs": int(segment.get("end", 0) * 1000),
+        }
+        for index, segment in enumerate(result.get("segments", []))
+        if segment.get("text", "").strip()
+    ]
+    return {"text": result.get("text", ""), "spans": spans, "source": "server"}

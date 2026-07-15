@@ -32,6 +32,7 @@ export { items, type BlobUrlResult } from './items';
 export { medicines } from './medicines';
 export { vision } from './vision';
 export { chat, type ChatEvent, type PendingApproval, type ChatHealthResponse } from './chat';
+export { audio, type AudioTranscriptResponse, type AudioTranscriptSpan } from './audio';
 
 // Re-export settings APIs
 export {

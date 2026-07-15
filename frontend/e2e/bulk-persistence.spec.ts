@@ -114,3 +114,22 @@ test('Bulk Sweep falls back when camera permission is denied', async ({ page }) 
 	await expect(page.getByText(/camera permission denied/i)).toBeVisible();
 	await expect(page.locator('input[type="file"]')).toHaveCount(1);
 });
+
+test('Bulk Sweep keeps narration usable without browser speech recognition', async ({ page }) => {
+	await mockBulkApi(page);
+	await page.addInitScript(() => {
+		delete (window as any).SpeechRecognition;
+		delete (window as any).webkitSpeechRecognition;
+		Object.defineProperty(navigator, 'mediaDevices', {
+			value: { getUserMedia: async () => Promise.reject(new DOMException('denied', 'NotAllowedError')) },
+		});
+	});
+	await page.goto('/location');
+	await page.getByPlaceholder('Search all locations...').fill('Living');
+	await page.getByRole('button', { name: /Living room/i }).click();
+	await page.getByRole('button', { name: /continue to capture/i }).click();
+	await page.getByRole('button', { name: /bulk sweep/i }).click();
+	await page.getByRole('button', { name: /narrate/i }).click();
+	await expect(page.getByText('Microphone unavailable. You can type notes instead.', { exact: true })).toBeVisible();
+	await expect(page.getByText('type notes', { exact: true })).toBeVisible();
+});

@@ -132,6 +132,12 @@ class Settings(BaseSettings):
     bulk_max_attachments_per_item: int = 4
     bulk_low_confidence_threshold: float = 0.65
 
+    # Server-side Bulk Sweep narration transcription
+    transcription_enabled: bool = True
+    transcription_model: str = "whisper-1"
+    transcription_api_base: str | None = None
+    transcription_timeout: int = 90
+
     # Rate limiting configuration (prevents hitting OpenAI API limits)
     # Default values are 80% of Tier 1 limits for safety margin
     rate_limit_enabled: bool = True  # Set to false to disable rate limiting
