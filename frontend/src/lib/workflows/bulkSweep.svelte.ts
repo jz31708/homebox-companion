@@ -167,6 +167,30 @@ class BulkSweepWorkflow {
 			startMs: span.startOffsetMs ?? undefined,
 			endMs: span.endOffsetMs ?? undefined,
 		}));
+		const durableCandidates = bundle.candidates.length ? bundle.candidates : await bulkMissionDb.loadCandidateSnapshot(this.missionId);
+		this._candidates = durableCandidates.map((candidate) => ({
+			id: candidate.id,
+			name: candidate.name,
+			quantity: candidate.quantity,
+			description: null,
+			tag_ids: [],
+			manufacturer: null,
+			model_number: null,
+			serial_number: null,
+			purchase_price: null,
+			purchase_from: null,
+			notes: null,
+			custom_fields: {},
+			confidence: 0,
+			status: candidate.state === 'accepted' ? 'accepted' : candidate.state === 'rejected' ? 'rejected' : 'needs_review',
+			evidence: candidate.evidencePhotoIds.map((photoId) => ({ photoId, reason: 'Persisted candidate evidence' })),
+			sourcePhotoIds: candidate.evidencePhotoIds,
+			uncertaintyReasons: candidate.warningCodes,
+			duplicateCandidateIds: [],
+			duplicateExistingItemId: candidate.duplicateMatches[0]?.existingItemId ?? null,
+			suggestedAction: 'review',
+			originalFiles: candidate.evidencePhotoIds.map((photoId) => this._photos.find((photo) => photo.id === photoId)?.file).filter((file): file is File => Boolean(file)),
+		}));
 		this._status = this._status === 'analyzing' ? 'transcript_review' : this._status;
 		this._error = mission.lastError?.message ?? null;
 		return true;
@@ -396,10 +420,88 @@ class BulkSweepWorkflow {
 		this._candidates = this._candidates.map((candidate) =>
 			candidate.id === id ? { ...candidate, ...patch } : candidate
 		);
+		void this.persistCandidateRecords().catch((error) => log.error('Candidate persistence failed', error));
 	}
 
 	setCandidateStatus(id: string, status: BulkCandidateItem['status']): void {
 		this.updateCandidate(id, { status });
+	}
+
+	private async persistCandidateRecords(): Promise<void> {
+		const records: BulkCandidateRecord[] = [];
+		for (const candidate of this._candidates) {
+			const record: BulkCandidateRecord = {
+				schemaVersion: 1,
+				missionId: this.missionId,
+				id: candidate.id,
+				state: candidate.status === 'accepted' ? 'accepted' : candidate.status === 'rejected' ? 'rejected' : 'needs_review',
+				reviewTier: candidate.uncertaintyReasons.length ? 'attention' : 'ready',
+				name: candidate.name,
+				quantity: Math.max(1, candidate.quantity),
+				entityMode: candidate.quantity > 1 ? 'grouped' : 'individual',
+				quantityBasis: candidate.quantity > 1 ? 'unknown' : 'distinct_entities',
+				sourceObservationIds: candidate.sourcePhotoIds,
+				evidencePhotoIds: candidate.sourcePhotoIds,
+				evidenceTranscriptSpanIds: candidate.evidence.map((ref) => ref.transcriptSpanId).filter((span): span is string => Boolean(span)),
+				blockerCodes: [], warningCodes: candidate.uncertaintyReasons,
+				duplicateMatches: candidate.duplicateExistingItemId ? [{ existingItemId: candidate.duplicateExistingItemId, matchKind: 'advisory', reasons: ['Review required'] }] : [],
+				createdHomeboxItemId: null,
+			};
+			const clone = JSON.parse(JSON.stringify(record)) as BulkCandidateRecord;
+			records.push(clone);
+			await bulkMissionDb.saveCandidate(clone);
+		}
+		await bulkMissionDb.saveCandidateSnapshot(this.missionId, records);
+	}
+
+	async persistCandidates(): Promise<void> {
+		await this.persistCandidateRecords();
+	}
+
+	addManualCandidate(name: string): string {
+		const id = createId('manual');
+		this._candidates = [...this._candidates, {
+			id, name, quantity: 1, description: null, tag_ids: [], manufacturer: null,
+			model_number: null, serial_number: null, purchase_price: null, purchase_from: null,
+			notes: null, custom_fields: {}, confidence: 0, status: 'needs_review', evidence: [],
+			sourcePhotoIds: [], uncertaintyReasons: ['manual_candidate_needs_evidence'], duplicateCandidateIds: [],
+			duplicateExistingItemId: null, suggestedAction: 'review', originalFiles: [],
+		}];
+		void this.persistCandidateRecords().catch((error) => log.error('Candidate persistence failed', error));
+		return id;
+	}
+
+	mergeCandidates(ids: string[], quantity: number, quantityBasis: 'explicit_count' | 'user_confirmed'): void {
+		if (quantity < 1 || ids.length < 2) return;
+		const selected = this._candidates.filter((candidate) => ids.includes(candidate.id));
+		if (selected.length < 2) return;
+		const first = selected[0];
+		const merged = { ...first, id: createId('merged'), quantity, status: 'needs_review' as const,
+			sourcePhotoIds: [...new Set(selected.flatMap((candidate) => candidate.sourcePhotoIds))],
+			evidence: selected.flatMap((candidate) => candidate.evidence),
+			uncertaintyReasons: [...new Set(selected.flatMap((candidate) => candidate.uncertaintyReasons).concat(`quantity_basis:${quantityBasis}`))] };
+		this._candidates = [...this._candidates.filter((candidate) => !ids.includes(candidate.id)), merged];
+		void this.persistCandidateRecords().catch((error) => log.error('Candidate persistence failed', error));
+	}
+
+	splitCandidate(id: string, firstQuantity: number, secondQuantity: number): void {
+		const candidate = this._candidates.find((entry) => entry.id === id);
+		if (!candidate || firstQuantity < 1 || secondQuantity < 1) return;
+		const split = [
+			{ ...candidate, id: createId('split'), quantity: firstQuantity, status: 'needs_review' as const },
+			{ ...candidate, id: createId('split'), quantity: secondQuantity, status: 'needs_review' as const },
+		];
+		this._candidates = [...this._candidates.filter((entry) => entry.id !== id), ...split];
+		void this.persistCandidateRecords().catch((error) => log.error('Candidate persistence failed', error));
+	}
+
+	resolveDuplicate(id: string, action: 'keep_new' | 'use_existing' | 'review'): void {
+		this._candidates = this._candidates.map((candidate) => candidate.id === id ? {
+			...candidate,
+			duplicateExistingItemId: action === 'use_existing' ? candidate.duplicateExistingItemId : null,
+			uncertaintyReasons: action === 'review' ? [...new Set([...candidate.uncertaintyReasons, 'duplicate_unresolved'])] : candidate.uncertaintyReasons.filter((reason) => reason !== 'duplicate_unresolved'),
+		} : candidate);
+		void this.persistCandidateRecords();
 	}
 
 	acceptHighConfidence(): void {

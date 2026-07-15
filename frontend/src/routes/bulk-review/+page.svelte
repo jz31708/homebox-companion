@@ -12,8 +12,16 @@
 
 	const workflow = bulkSweepWorkflow;
 	let editingId = $state<string | null>(null);
+	let activeTab = $state<'attention' | 'ready' | 'accepted' | 'submitted' | 'rejected' | 'all'>('attention');
+	let manualName = $state('');
+	let draftNames = $state<Record<string, string>>({});
+	let filteredCandidates = $derived(
+		workflow.state.candidates.filter((candidate) => activeTab === 'all' ||
+			(activeTab === 'attention' && candidate.status === 'needs_review') || candidate.status === activeTab)
+	);
 
-	onMount(() => {
+	onMount(async () => {
+		if (!workflow.state.candidates.length) await workflow.recover();
 		if (!workflow.state.candidates.length) goto(resolve('/bulk-capture'));
 	});
 
@@ -52,9 +60,24 @@
 			>Accept all</Button
 		>
 	</div>
+	<details class="mb-4 rounded-xl border border-neutral-700 bg-neutral-900 p-3">
+		<summary class="cursor-pointer text-body-sm text-neutral-200">Homebox payload preview</summary>
+		<pre class="mt-3 max-h-64 overflow-auto whitespace-pre-wrap text-caption text-neutral-400">{JSON.stringify(workflow.acceptedCandidates.map((candidate) => ({ name: candidate.name, quantity: candidate.quantity, description: candidate.description, tag_ids: candidate.tag_ids, parent_id: workflow.state.parentItemId, manufacturer: candidate.manufacturer, model_number: candidate.model_number, serial_number: candidate.serial_number })), null, 2)}</pre>
+	</details>
+	<div class="mb-4 flex gap-2 overflow-x-auto" role="tablist" aria-label="Candidate filters">
+		{#each ['attention', 'ready', 'accepted', 'submitted', 'rejected', 'all'] as tab (tab)}
+			<button class="rounded-full border px-3 py-2 text-caption {activeTab === tab ? 'border-blue-400 text-blue-200' : 'border-neutral-700 text-neutral-400'}" role="tab" aria-selected={activeTab === tab} onclick={() => (activeTab = tab as typeof activeTab)}>
+				{tab} ({tab === 'all' ? workflow.state.candidates.length : workflow.state.candidates.filter((candidate) => tab === 'attention' ? candidate.status === 'needs_review' : candidate.status === tab).length})
+			</button>
+		{/each}
+	</div>
+	<div class="mb-4 flex gap-2">
+		<input class="input-sm min-w-0 flex-1" placeholder="Add missing item" bind:value={manualName} />
+		<Button variant="secondary" onclick={async () => { if (manualName.trim()) { workflow.addManualCandidate(manualName.trim()); manualName = ''; await workflow.persistCandidates(); } }}>Add</Button>
+	</div>
 
 	<div class="space-y-4">
-		{#each workflow.state.candidates as candidate (candidate.id)}
+		{#each filteredCandidates as candidate (candidate.id)}
 			<div
 				class="rounded-xl border bg-neutral-900 p-4 {candidate.status === 'accepted'
 					? 'border-success-500/70'
@@ -82,9 +105,8 @@
 					<div class="mb-3 grid gap-2">
 						<input
 							class="input-sm"
-							value={candidate.name}
-							oninput={(event) =>
-								workflow.updateCandidate(candidate.id, { name: event.currentTarget.value })}
+							value={draftNames[candidate.id] ?? candidate.name}
+							oninput={(event) => (draftNames[candidate.id] = (event.target as HTMLInputElement).value)}
 						/>
 						<input
 							class="input-sm"
@@ -102,6 +124,7 @@
 							oninput={(event) =>
 								workflow.updateCandidate(candidate.id, { description: event.currentTarget.value })}
 						></textarea>
+						<Button variant="secondary" onclick={async () => { workflow.updateCandidate(candidate.id, { name: draftNames[candidate.id] ?? candidate.name }); await workflow.persistCandidates(); }}>Save changes</Button>
 					</div>
 				{:else if candidate.description}
 					<p class="mb-3 text-body-sm text-neutral-300">{candidate.description}</p>
@@ -130,6 +153,12 @@
 							<li>{evidence.reason ?? evidence.quote ?? 'Evidence attached'}</li>
 						{/each}
 					</ul>
+				{/if}
+				{#if candidate.duplicateExistingItemId}
+					<div class="mb-3 flex items-center justify-between rounded-lg border border-warning-500/50 p-2 text-caption text-warning-200">
+						<span>Possible existing Homebox item</span>
+						<button type="button" class="underline" onclick={() => workflow.resolveDuplicate(candidate.id, 'keep_new')}>Keep new</button>
+					</div>
 				{/if}
 
 				<div class="flex gap-2">

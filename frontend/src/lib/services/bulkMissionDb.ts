@@ -106,11 +106,25 @@ export async function saveCandidates(
 	await serializedWrite(async () => {
 		const db = await getDb();
 		const tx = db.transaction('candidates', 'readwrite');
-		await Promise.all(
-			candidates.map((candidate) => tx.store.put(candidate, key(missionId, candidate.id)))
-		);
+		for (const candidate of candidates) {
+			await tx.store.put(candidate, key(missionId, candidate.id));
+		}
 		await tx.done;
 	});
+}
+
+export async function saveCandidate(candidate: BulkCandidateRecord): Promise<void> {
+	await put('candidates', candidate, candidate.id, candidate.missionId);
+}
+
+export async function saveCandidateSnapshot(missionId: string, candidates: BulkCandidateRecord[]): Promise<void> {
+	await put('meta', { missionId, candidates }, `candidate-snapshot:${missionId}`);
+}
+
+export async function loadCandidateSnapshot(missionId: string): Promise<BulkCandidateRecord[]> {
+	const db = await getDb();
+	const value = (await db.get('meta', `candidate-snapshot:${missionId}`)) as { candidates?: BulkCandidateRecord[] } | undefined;
+	return value?.candidates ?? [];
 }
 
 export async function saveOutbox(operation: BulkOutboxOperationRecord): Promise<void> {
