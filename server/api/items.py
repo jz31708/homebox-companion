@@ -11,6 +11,7 @@ from homebox_companion import DetectedItem, HomeboxAuthError, HomeboxClient, set
 from homebox_companion.ai.images import compress_image_for_upload
 from homebox_companion.homebox import ItemCreate
 from homebox_companion.tools.vision.bulk_submission import IdempotencyConflict, SubmissionLedger
+from homebox_companion.tools.vision.models import HomeboxItemField
 
 from ..dependencies import get_client, get_token, get_valid_tag_ids, validate_file_size
 from ..schemas.items import BatchCreateRequest
@@ -68,6 +69,43 @@ async def submit_bulk_candidate(
             if not item_id:
                 raise RuntimeError("Homebox did not return an item ID")
             bulk_ledger.record_item(idempotency_key, str(item_id))
+            extended = {
+                key: payload[key]
+                for key in ("manufacturer", "model_number", "serial_number", "purchase_price", "purchase_from", "notes")
+                if payload.get(key) is not None
+            }
+            custom_fields = payload.get("custom_fields") or {}
+            if extended or custom_fields:
+                current = await client.get_item(token, str(item_id))
+                update_data: dict[str, Any] = {
+                    "name": current.get("name"),
+                    "description": current.get("description", ""),
+                    "quantity": current.get("quantity", 1),
+                    "parentId": current.get("parent", {}).get("id"),
+                    "tagIds": [tag.get("id") for tag in current.get("tags", []) if tag.get("id")],
+                    **{
+                        "modelNumber": extended.pop("model_number")
+                        if "model_number" in extended
+                        else None,
+                        "serialNumber": extended.pop("serial_number")
+                        if "serial_number" in extended
+                        else None,
+                        "purchasePrice": extended.pop("purchase_price")
+                        if "purchase_price" in extended
+                        else None,
+                        "purchaseFrom": extended.pop("purchase_from")
+                        if "purchase_from" in extended
+                        else None,
+                        **extended,
+                    },
+                }
+                update_data = {key: value for key, value in update_data.items() if value is not None}
+                if custom_fields:
+                    update_data["fields"] = [
+                        HomeboxItemField(name=str(name), textValue=str(value)).model_dump(by_alias=True)
+                        for name, value in custom_fields.items()
+                    ]
+                await client.update_item(token, str(item_id), update_data)
         except Exception:
             return JSONResponse(
                 status_code=502, content={"status": "failed", "error": "item creation failed", "retryable": True}
