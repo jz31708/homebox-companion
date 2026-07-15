@@ -45,8 +45,8 @@ async def submit_bulk_candidate(
                     name=payload["name"],
                     quantity=int(payload.get("quantity", 1)),
                     description=payload.get("description") or "",
-                    parent_id=payload.get("parent_id"),
-                    tag_ids=payload.get("tag_ids"),
+                    parent_id=payload.get("parent_id"),  # ty: ignore[unknown-argument]
+                    tag_ids=payload.get("tag_ids"),  # ty: ignore[unknown-argument]
                 ),
             )
             item_id = item.get("id")

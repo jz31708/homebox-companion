@@ -34,6 +34,10 @@ async function mockBulkApi(page: import('@playwright/test').Page) {
 			await route.fulfill({ json: [] });
 			return;
 		}
+		if (path.startsWith('/items/bulk/')) {
+			await route.fulfill({ json: { status: 'complete', homeboxItemId: 'e2e-item', attachments: [] } });
+			return;
+		}
 		await route.fulfill({ status: 404, json: { detail: `Unhandled ${path}` } });
 	});
 }
