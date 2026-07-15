@@ -61,3 +61,18 @@ class BulkDetectResponse(BaseModel):
     candidates: list[BulkCandidateItem]
     warnings: list[str] = Field(default_factory=list)
     stats: BulkStats
+
+
+class BulkObservation(BaseModel):
+    id: str
+    name: str
+    photoIds: list[str] = Field(default_factory=list)
+    transcriptSpanIds: list[str] = Field(default_factory=list)
+    evidence: list[BulkEvidenceRef] = Field(default_factory=list)
+
+
+class BulkObservationResponse(BaseModel):
+    chunkId: str
+    photoIds: list[str]
+    observations: list[BulkObservation]
+    warnings: list[str] = Field(default_factory=list)

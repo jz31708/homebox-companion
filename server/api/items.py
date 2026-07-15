@@ -1,19 +1,153 @@
 """Items API routes."""
 
+import json
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, Response
 from loguru import logger
 
 from homebox_companion import DetectedItem, HomeboxAuthError, HomeboxClient, settings
 from homebox_companion.ai.images import compress_image_for_upload
 from homebox_companion.homebox import ItemCreate
+from homebox_companion.tools.vision.bulk_submission import IdempotencyConflict, SubmissionLedger
+from homebox_companion.tools.vision.models import HomeboxItemField
 
 from ..dependencies import get_client, get_token, get_valid_tag_ids, validate_file_size
 from ..schemas.items import BatchCreateRequest
 
 router = APIRouter()
+bulk_ledger = SubmissionLedger()
+
+
+@router.post("/items/bulk/{mission_id}/{candidate_id}")
+async def submit_bulk_candidate(
+    mission_id: str,
+    candidate_id: str,
+    candidate: Annotated[str, Form(...)],
+    request_hash: Annotated[str, Form(...)],
+    idempotency_key: Annotated[str, Form(...)],
+    token: Annotated[str, Depends(get_token)],
+    client: Annotated[HomeboxClient, Depends(get_client)],
+    attachments: Annotated[list[UploadFile] | None, File()] = None,
+) -> JSONResponse:
+    """Create one reviewed candidate and independently reconcile photo attachments."""
+    try:
+        payload = json.loads(candidate)
+        reservation = bulk_ledger.reserve(idempotency_key, request_hash, mission_id, candidate_id, payload)
+    except (json.JSONDecodeError, IdempotencyConflict) as exc:
+        raise HTTPException(status_code=409 if isinstance(exc, IdempotencyConflict) else 400, detail=str(exc)) from exc
+    item_id = reservation.get("homebox_item_id")
+    if not item_id:
+        try:
+            existing_item_id = payload.get("existing_item_id")
+            if existing_item_id and payload.get("existing_item_action") == "increase_quantity":
+                existing = await client.get_item(token, str(existing_item_id))
+                item = await client.update_item(
+                    token,
+                    str(existing_item_id),
+                    {
+                        "name": existing.get("name"),
+                        "description": existing.get("description", ""),
+                        "quantity": int(existing.get("quantity", 1)) + int(payload.get("quantity", 1)),
+                        "parentId": existing.get("parent", {}).get("id"),
+                        "tagIds": [tag.get("id") for tag in existing.get("tags", []) if tag.get("id")],
+                    },
+                )
+            else:
+                item = await client.create_item(
+                    token,
+                    ItemCreate(
+                        name=payload["name"],
+                        quantity=int(payload.get("quantity", 1)),
+                        description=payload.get("description") or "",
+                        parent_id=payload.get("parent_id"),  # ty: ignore[unknown-argument]
+                        tag_ids=payload.get("tag_ids"),  # ty: ignore[unknown-argument]
+                    ),
+                )
+            item_id = item.get("id")
+            if not item_id:
+                raise RuntimeError("Homebox did not return an item ID")
+            bulk_ledger.record_item(idempotency_key, str(item_id))
+            extended = {
+                key: payload[key]
+                for key in ("manufacturer", "model_number", "serial_number", "purchase_price", "purchase_from", "notes")
+                if payload.get(key) is not None
+            }
+            custom_fields = payload.get("custom_fields") or {}
+            if extended or custom_fields:
+                current = await client.get_item(token, str(item_id))
+                update_data: dict[str, Any] = {
+                    "name": current.get("name"),
+                    "description": current.get("description", ""),
+                    "quantity": current.get("quantity", 1),
+                    "parentId": current.get("parent", {}).get("id"),
+                    "tagIds": [tag.get("id") for tag in current.get("tags", []) if tag.get("id")],
+                    **{
+                        "modelNumber": extended.pop("model_number")
+                        if "model_number" in extended
+                        else None,
+                        "serialNumber": extended.pop("serial_number")
+                        if "serial_number" in extended
+                        else None,
+                        "purchasePrice": extended.pop("purchase_price")
+                        if "purchase_price" in extended
+                        else None,
+                        "purchaseFrom": extended.pop("purchase_from")
+                        if "purchase_from" in extended
+                        else None,
+                        **extended,
+                    },
+                }
+                update_data = {key: value for key, value in update_data.items() if value is not None}
+                if custom_fields:
+                    update_data["fields"] = [
+                        HomeboxItemField(name=str(name), textValue=str(value)).model_dump(by_alias=True)
+                        for name, value in custom_fields.items()
+                    ]
+                await client.update_item(token, str(item_id), update_data)
+        except Exception:
+            return JSONResponse(
+                status_code=502, content={"status": "failed", "error": "item creation failed", "retryable": True}
+            )
+    existing = {
+        entry["photo_id"]: entry for entry in (bulk_ledger.operation(idempotency_key) or {}).get("attachments", [])
+    }
+    results: list[dict[str, Any]] = []
+    for upload in attachments or []:
+        photo_id, _, filename = (upload.filename or "").partition("|")
+        if not photo_id or not filename:
+            results.append(
+                {
+                    "photoId": photo_id or None,
+                    "status": "failed",
+                    "error": "attachment filename must be photoId|filename",
+                }
+            )
+            continue
+        if existing.get(photo_id, {}).get("status") == "complete":
+            results.append(
+                {"photoId": photo_id, "status": "complete", "attachmentId": existing[photo_id].get("attachment_id")}
+            )
+            continue
+        try:
+            content = await upload.read()
+            result = await client.upload_attachment(
+                token, str(item_id), content, filename, upload.content_type or "image/jpeg"
+            )
+            attachment_id = result.get("id") if isinstance(result, dict) else None
+            bulk_ledger.record_attachment(idempotency_key, photo_id, "complete", attachment_id)
+            results.append({"photoId": photo_id, "status": "complete", "attachmentId": attachment_id})
+        except Exception:
+            bulk_ledger.record_attachment(idempotency_key, photo_id, "failed", error="attachment upload failed")
+            results.append(
+                {"photoId": photo_id, "status": "failed", "error": "attachment upload failed", "retryable": True}
+            )
+    status = "complete" if all(result["status"] == "complete" for result in results) else "attachments_partial"
+    return JSONResponse(
+        status_code=200 if status == "complete" else 207,
+        content={"status": status, "candidateId": candidate_id, "homeboxItemId": item_id, "attachments": results},
+    )
 
 
 @router.get("/items")

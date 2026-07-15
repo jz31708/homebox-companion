@@ -51,6 +51,7 @@ export interface BulkDetectInput {
 	parentItemId: string | null;
 	editedTranscript: string;
 	transcriptSpans: BulkTranscriptSpan[];
+	photoIds?: string[];
 }
 
 export interface MedicineDetectOptions {
@@ -242,6 +243,7 @@ export const vision = {
 					groupLabel: photo.groupLabel,
 					ignored: photo.ignored,
 				})),
+				photoIds: input.photoIds,
 			})
 		);
 		formData.append('edited_transcript', input.editedTranscript);

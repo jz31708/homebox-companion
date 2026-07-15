@@ -1,0 +1,112 @@
+[
+  {
+    "path": "00_START_HERE.md",
+    "bytes": 1766,
+    "sha256": "c17c3a781f48ac4cf5f0ec5cb87ab3772669b66dd93c219b7f256a076a465da5"
+  },
+  {
+    "path": "01_AUDIT_VERDICT.md",
+    "bytes": 2195,
+    "sha256": "33484968e8c2bddeb30d49aca6508e25ec5bd87bad07b297d4400b493e91178c"
+  },
+  {
+    "path": "02_BLOCKING_FINDINGS.md",
+    "bytes": 11030,
+    "sha256": "9ff676aec01f3257f9f0f676b41a7cece4ab8151794b651d6bc873bbb09ed237"
+  },
+  {
+    "path": "03_PHASE_GATE_REOPEN_MATRIX.md",
+    "bytes": 1514,
+    "sha256": "7b25da3aa04e24518fb3d5680bfbbb8518069c7cdb264dcc59170105fb1e5a00"
+  },
+  {
+    "path": "04_REQUIRED_FINAL_ARCHITECTURE.md",
+    "bytes": 2357,
+    "sha256": "09b77f1231e4581a287d6ad25596e0d8c567b225da1b5241e6bdeb7208fd6299"
+  },
+  {
+    "path": "05_FILE_LEVEL_REMEDIATION.md",
+    "bytes": 2927,
+    "sha256": "a5e55a2307eabe9fbcd1dd2b8ec6ceda70df4c6d784ce990458d2095d8434657"
+  },
+  {
+    "path": "06_REQUIRED_TEST_MATRIX.md",
+    "bytes": 3036,
+    "sha256": "3b1654efce2547c43ae87d5f3f5011a4bd3fcdc798dcfa1001df14791269221a"
+  },
+  {
+    "path": "07_DEPLOYMENT_ROLLBACK_AND_REACCEPTANCE.md",
+    "bytes": 1827,
+    "sha256": "abbabd40f815616b716784d8fdb3b467b03c3d74ad2df73ea8d198225c619f1c"
+  },
+  {
+    "path": "08_FINAL_CERTIFICATION_STANDARD.md",
+    "bytes": 1226,
+    "sha256": "a2ac178cb24555c24d074a5fd584c55ea5254555cc7159368ae6ad7fc157bba6"
+  },
+  {
+    "path": "AUDIT_FINDINGS.json",
+    "bytes": 504,
+    "sha256": "55f1675fa8a08322a94b15401c5aedb0637cc9bbf1c154e223b1cd9c9e79f9ea"
+  },
+  {
+    "path": "REMEDIATION_STATE.yaml",
+    "bytes": 1637,
+    "sha256": "9e22f813714c8a9e63c1612cfa883bb256abc3d53b87a7576ebca184efd38084"
+  },
+  {
+    "path": "codex/00_MASTER_OPERATING_INSTRUCTIONS.md",
+    "bytes": 992,
+    "sha256": "18743ab8b99a809c58345efb24a6b8c058aa72b8e1a71ed5c7e9321146e39cff"
+  },
+  {
+    "path": "codex/01_BRANCH_TRUTH_AND_CONTAINMENT.md",
+    "bytes": 1040,
+    "sha256": "12acd2ebdc08a30f3807c24bd49bdd6dc77e8c8a1feb038235ff647cff46674a"
+  },
+  {
+    "path": "codex/02_CAMERA_CONTEXT_PERSISTENCE.md",
+    "bytes": 1180,
+    "sha256": "c74f98bbb4e96ee408973a6267b4f98019d2d52e38d50f8955411d029adfcae0"
+  },
+  {
+    "path": "codex/03_NARRATION_SECURITY_RUNTIME.md",
+    "bytes": 1022,
+    "sha256": "f46c0303396e281448ce2c432887bebea9cb854e29157b9bc5f71934c0bdb179"
+  },
+  {
+    "path": "codex/04_OBSERVE_FUSE_PIPELINE.md",
+    "bytes": 1084,
+    "sha256": "c761805fedcf166511c5d8a431d29b5f3256fc79c68050e290c4ccb11fd889a9"
+  },
+  {
+    "path": "codex/05_REVIEW_CANDIDATE_FIDELITY.md",
+    "bytes": 929,
+    "sha256": "090c287881a30df4c711fb5400210d1e0623c54a1151606d5b5ebc32e6a337a2"
+  },
+  {
+    "path": "codex/06_SUBMISSION_IDEMPOTENCY.md",
+    "bytes": 1229,
+    "sha256": "be7fd6cc131d9899b039f8a10769930e1c3ccac9c9be03a847fb68fa1e41fe40"
+  },
+  {
+    "path": "codex/07_VALIDATION_AUDIT.md",
+    "bytes": 641,
+    "sha256": "dd9bb5c45b8ed45aa313841ed6a08f4c34481c4ab050f901e99f88f3f3fdd43b"
+  },
+  {
+    "path": "codex/08_REDEPLOY_REACCEPT.md",
+    "bytes": 662,
+    "sha256": "e1ca789433b1b0746c2b2d89f987d31c895348c3de11b9c94de8dad37eb58978"
+  },
+  {
+    "path": "codex/09_PHYSICAL_PILOT.md",
+    "bytes": 513,
+    "sha256": "9b1823e0f4432d44967d80a5d0194671f097e11dde7feca5927349cb719620b1"
+  },
+  {
+    "path": "goal",
+    "bytes": 3242,
+    "sha256": "b74816cc2e72a512d84b2f44a49cef61102d241fa5eeda3587f31bb68609ea77"
+  }
+]

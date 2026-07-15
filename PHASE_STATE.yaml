@@ -1,0 +1,55 @@
+schema_version: 1
+project: homebox-companion-phase11-remediation
+repository: jz31708/homebox-companion
+base_branch: main
+audited_branch: feature/final-apartment-ingestion
+audited_deployed_commit: 76a3b921d5646cd25d4f986a206eb6ee259c2190
+audited_main: 2c2ac9d305e03bafdd2866bee9d9bb78a2172d0f
+verdict: fail
+physical_pilot: blocked
+
+rules:
+  one_phase_per_pass: true
+  independent_review_required: true
+  no_self_certification: true
+  no_test_weakening: true
+  redeployment_required: true
+
+phases:
+  - id: 0
+    name: branch-truth-and-runtime-containment
+    status: in_progress
+    prompt: audit-remediation/codex/01_BRANCH_TRUTH_AND_CONTAINMENT.md
+    evidence: docs/plans/active/apartment-ingestion-audit-remediation.md, audit-remediation/runtime-containment-2026-07-15.md
+  - id: 1
+    name: camera-context-and-lossless-persistence
+    status: pending
+    prompt: audit-remediation/codex/02_CAMERA_CONTEXT_PERSISTENCE.md
+  - id: 2
+    name: narration-security-and-runtime
+    status: pending
+    prompt: audit-remediation/codex/03_NARRATION_SECURITY_RUNTIME.md
+  - id: 3
+    name: observation-and-fusion-production-path
+    status: pending
+    prompt: audit-remediation/codex/04_OBSERVE_FUSE_PIPELINE.md
+  - id: 4
+    name: review-and-candidate-fidelity
+    status: pending
+    prompt: audit-remediation/codex/05_REVIEW_CANDIDATE_FIDELITY.md
+  - id: 5
+    name: submission-idempotency-and-recovery
+    status: pending
+    prompt: audit-remediation/codex/06_SUBMISSION_IDEMPOTENCY.md
+  - id: 6
+    name: automated-validation-and-independent-audit
+    status: pending
+    prompt: audit-remediation/codex/07_VALIDATION_AUDIT.md
+  - id: 7
+    name: redeploy-and-disposable-reacceptance
+    status: pending
+    prompt: audit-remediation/codex/08_REDEPLOY_REACCEPT.md
+  - id: 8
+    name: physical-pilot-closeout
+    status: blocked
+    prompt: audit-remediation/codex/09_PHYSICAL_PILOT.md

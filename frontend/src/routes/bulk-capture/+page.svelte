@@ -3,11 +3,13 @@
 	import { resolve } from '$app/paths';
 	import { onDestroy, onMount } from 'svelte';
 	import { bulkSweepWorkflow } from '$lib/workflows/bulkSweep.svelte';
+	import * as bulkMissionDb from '$lib/services/bulkMissionDb';
 	import { showToast } from '$lib/stores/ui.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import StepIndicator from '$lib/components/StepIndicator.svelte';
 	import BackLink from '$lib/components/BackLink.svelte';
 	import AnalysisProgressBar from '$lib/components/AnalysisProgressBar.svelte';
+	import BulkCameraCapture from '$lib/components/BulkCameraCapture.svelte';
 	import { Camera, Mic, MicOff, Trash2, ImagePlus, FileText, Sparkles } from 'lucide-svelte';
 
 	const workflow = bulkSweepWorkflow;
@@ -20,7 +22,11 @@
 	let isRecording = $state(false);
 	let liveSupported = $state(false);
 
-	onMount(() => {
+	onMount(async () => {
+		await bulkMissionDb.cleanupStaleMissions();
+		if (!workflow.state.locationId) {
+			await workflow.recover();
+		}
 		if (!workflow.state.locationId) goto(resolve('/location'));
 		const SpeechRecognition =
 			(window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -31,10 +37,16 @@
 		stopNarration();
 	});
 
-	function addFiles(files: FileList | null) {
+	async function addFiles(files: FileList | null) {
 		if (!files?.length) return;
-		workflow.addPhotos(Array.from(files));
+		await workflow.addPhotos(Array.from(files));
 		if (fileInput) fileInput.value = '';
+	}
+
+	async function addCapturedPhoto(event: CustomEvent<Blob>) {
+		await workflow.addPhotos([
+			new File([event.detail], `capture-${Date.now()}.jpg`, { type: 'image/jpeg' }),
+		]);
 	}
 
 	async function startNarration() {
@@ -122,6 +134,9 @@
 
 	<h2 class="mb-1 text-h2 text-neutral-100">Bulk Sweep</h2>
 	<p class="mb-4 text-body-sm text-neutral-400">{workflow.state.locationPath}</p>
+	<BulkCameraCapture
+		oncapture={(blob: Blob) => addCapturedPhoto(new CustomEvent('capture', { detail: blob }))}
+	/>
 
 	<div class="mb-4 grid grid-cols-2 gap-3">
 		<Button variant="primary" onclick={() => fileInput.click()}>
@@ -140,6 +155,11 @@
 			</Button>
 		{/if}
 	</div>
+	{#if workflow.state.photos.length > 0}
+		<Button variant="secondary" full onclick={() => workflow.discardPersistedMission()}>
+			<span>Discard this sweep</span>
+		</Button>
+	{/if}
 	<input
 		bind:this={fileInput}
 		class="hidden"
@@ -248,8 +268,10 @@
 	{/if}
 </div>
 
-<div class="fixed-bottom-panel p-4">
-	{#if workflow.state.status === 'transcript_review'}
+	<div class="fixed-bottom-panel p-4">
+	{#if workflow.state.status === 'analyzing'}
+		<Button variant="secondary" full onclick={() => workflow.cancelAnalysis()}>Cancel analysis</Button>
+	{:else if workflow.state.status === 'transcript_review'}
 		<Button variant="primary" full onclick={analyze}>
 			<Sparkles size={18} strokeWidth={1.5} />
 			<span>Analyze with this transcript</span>
