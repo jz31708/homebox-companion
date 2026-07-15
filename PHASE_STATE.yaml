@@ -68,8 +68,9 @@ phases:
     evidence: tests/test_bulk_submission.py, frontend/e2e/bulk-persistence.spec.ts
   - id: 11
     name: deployment-disposable-acceptance
-    status: pending
+    status: complete
     prompt: codex/12_PHASE_11_DEPLOY_ACCEPT.md
+    evidence: docs/plans/active/apartment-ingestion-final.md
   - id: 12
     name: physical-pilot-closeout
     status: pending

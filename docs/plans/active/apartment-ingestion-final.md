@@ -207,3 +207,24 @@ Passing unit tests or mocked UI tests alone never proves the product complete. D
 - Phase 10 acceptance evidence is complete; the only Ty invocation caveat is
   the inaccessible pre-existing `.pytest_cache` directory when scanning the
   repository root directly on this workstation.
+
+## Phase 11 evidence (2026-07-15)
+
+- Deployed pushed commit `76a3b92` to LXC 258 with image digest
+  `sha256:3a2bb3de06ad04f7ac9534faab98671568ee91af6ec088cb7982af734d31df59`.
+- Direct `http://192.168.1.246:8055/api/version` and proxied
+  `https://companion.lan/api/version` both return `3.0.2`; the live container
+  is healthy. The persistent bind mount remains `/opt/homebox-companion/data`,
+  retaining `medicine-reference.sqlite3` and `bulk-submission.sqlite3`.
+  Rollback source/config/data backups are retained under
+  `/opt/homebox-companion-backups/20260715-0928`.
+- Disposable authenticated acceptance used Homebox `0.26.1` and the final
+  image on isolated ports. It verified location/parent mapping, quantity,
+  extended fields, custom fields, attachment persistence, partial attachment
+  retry, item-creation failure, idempotent replay, and existing-item quantity
+  increase without creating a second item. Disposable containers and data were
+  removed afterward.
+- Direct route smoke returned HTTP 200 for Classic Capture, Medicine Capture,
+  Bulk Capture, Bulk Review, and Bulk Complete. Live Homebox was not mutated;
+  its credentials were unavailable, so the disposable fixture was the
+  authoritative authenticated acceptance surface for this phase.
