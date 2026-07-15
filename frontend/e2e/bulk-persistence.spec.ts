@@ -133,3 +133,39 @@ test('Bulk Sweep keeps narration usable without browser speech recognition', asy
 	await expect(page.getByText('Microphone unavailable. You can type notes instead.', { exact: true })).toBeVisible();
 	await expect(page.getByText('type notes', { exact: true })).toBeVisible();
 });
+
+test('Bulk Sweep resumes completed observation chunks without resending them', async ({ page }) => {
+	await mockBulkApi(page);
+	let calls = 0;
+	await page.route('**/api/tools/vision/bulk-detect', async (route) => {
+		calls += 1;
+		if (calls === 2) {
+			await route.fulfill({ status: 502, json: { detail: 'temporary provider failure' } });
+			return;
+		}
+		await route.fulfill({
+			json: {
+				candidates: [],
+				warnings: [],
+				stats: { photo_count: 8, ignored_photo_count: 0, candidate_count: 0, low_confidence_count: 0 },
+			},
+		});
+	});
+	await page.goto('/location');
+	await page.getByPlaceholder('Search all locations...').fill('Living');
+	await page.getByRole('button', { name: /Living room/i }).click();
+	await page.getByRole('button', { name: /continue to capture/i }).click();
+	await page.getByRole('button', { name: /bulk sweep/i }).click();
+	await page.locator('input[type="file"]').setInputFiles(
+		Array.from({ length: 10 }, (_, index) => ({ name: `photo-${index}.jpg`, mimeType: 'image/jpeg', buffer: Buffer.from(`photo-${index}`) }))
+	);
+	await page.getByRole('button', { name: /review transcript/i }).click();
+	await page.getByRole('button', { name: /analyze with this transcript/i }).click();
+	await expect(page).toHaveURL(/bulk-capture/);
+	await expect.poll(() => calls).toBe(2);
+	await page.reload();
+	await page.getByRole('button', { name: /review transcript/i }).click();
+	await page.getByRole('button', { name: /analyze with this transcript/i }).click();
+	await expect(page).toHaveURL(/bulk-capture/);
+	await expect.poll(() => calls).toBe(3);
+});

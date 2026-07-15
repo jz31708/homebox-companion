@@ -270,8 +270,10 @@
 	{/if}
 </div>
 
-<div class="fixed-bottom-panel p-4">
-	{#if workflow.state.status === 'transcript_review'}
+	<div class="fixed-bottom-panel p-4">
+	{#if workflow.state.status === 'analyzing'}
+		<Button variant="secondary" full onclick={() => workflow.cancelAnalysis()}>Cancel analysis</Button>
+	{:else if workflow.state.status === 'transcript_review'}
 		<Button variant="primary" full onclick={analyze}>
 			<Sparkles size={18} strokeWidth={1.5} />
 			<span>Analyze with this transcript</span>

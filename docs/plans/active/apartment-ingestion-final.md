@@ -112,3 +112,18 @@ Passing unit tests or mocked UI tests alone never proves the product complete. D
 - Frontend gate: `npm run check`, `npm run lint`, and `npm run build` passed.
 - Mobile Playwright gate: `3 passed`, covering persistence/reload, denied
   camera fallback, and narration without browser SpeechRecognition.
+
+## Phase 5 evidence (2026-07-15)
+
+- Added deterministic stable-order observation planning in 6–8 photo chunks,
+  with nearby transcript spans and explicit photo IDs.
+- Added `/tools/vision/bulk-observe` for explicit chunk requests and evidence
+  ID validation; unknown photo/span references are removed with warnings.
+- Bulk analysis persists each chunk as analyzing, complete, or failed before
+  continuing. Completed chunks are skipped after reload; failed chunks remain
+  independently retryable, and cancellation aborts the current request.
+- Backend gate: `9 passed` across `tests/test_bulk_observation.py` and
+  `tests/test_bulk_contracts.py`.
+- Frontend gate: `npm run check`, `npm run lint`, and `npm run build` passed.
+- Mobile Playwright gate: `4 passed`, including a two-chunk partial failure
+  followed by reload and verification that the completed chunk was not resent.

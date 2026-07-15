@@ -38,8 +38,9 @@ phases:
     evidence: tests/test_audio_transcription.py, frontend/e2e/bulk-persistence.spec.ts
   - id: 5
     name: resumable-observation-analysis
-    status: pending
+    status: complete
     prompt: codex/06_PHASE_5_OBSERVATION.md
+    evidence: tests/test_bulk_observation.py, frontend/e2e/bulk-persistence.spec.ts
   - id: 6
     name: conservative-fusion-quantity-duplicates
     status: pending
