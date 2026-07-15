@@ -172,3 +172,19 @@ Passing unit tests or mocked UI tests alone never proves the product complete. D
 - Backend gate: `5 passed` in `tests/test_bulk_fusion.py`, plus all Phase 1/5
   contract and observation tests (`14 passed`).
 - Frontend gate: `npm run check`, `npm run lint`, and `npm run build` passed.
+
+## Phase 9 evidence (2026-07-15)
+
+- Added a global resume banner that cleans stale missions, exposes the saved
+  location/photo count, and supports explicit resume, later, and confirmed
+  discard actions.
+- Bulk mission records now retain the full location path. Recovery routes to
+  capture or review based on durable mission status, and successful bulk work
+  uses a dedicated completion route rather than Classic Capture's generic
+  success page.
+- Completion offers `Sweep another shelf or box` while retaining location and
+  parent, or `Finish this location` with full evidence cleanup.
+- Frontend gate: `npm run check`, `npm run lint`, and `npm run build` passed.
+- Mobile Playwright gate: `5 passed` in `e2e/bulk-persistence.spec.ts`, including
+  reload/offline persistence, denied camera, no browser SpeechRecognition,
+  resumable chunk failure, and durable review recovery.

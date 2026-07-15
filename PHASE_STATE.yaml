@@ -58,8 +58,9 @@ phases:
     evidence: tests/test_bulk_submission.py, src/homebox_companion/tools/vision/bulk_submission.py
   - id: 9
     name: mission-continuity
-    status: pending
+    status: complete
     prompt: codex/10_PHASE_9_CONTINUITY.md
+    evidence: frontend/e2e/bulk-persistence.spec.ts, frontend/src/lib/components/BulkResumeBanner.svelte
   - id: 10
     name: automated-validation
     status: pending

@@ -138,6 +138,7 @@ class BulkSweepWorkflow {
 		this._status = mission.status === 'complete' ? 'idle' : (mission.status as BulkSweepStatus);
 		this._locationId = mission.locationId;
 		this._locationName = mission.areaLabel;
+		this._locationPath = mission.locationPath ?? mission.areaLabel;
 		this._parentItemId = mission.parentItemId;
 		this._startedAtMs = Date.now();
 		this._photos = bundle.photos.map((photo) => ({
@@ -198,6 +199,27 @@ class BulkSweepWorkflow {
 	async discardPersistedMission(): Promise<void> {
 		await bulkMissionDb.discardMission(this.missionId);
 		this.reset();
+	}
+
+	async continueSameArea(): Promise<void> {
+		const locationId = this._locationId;
+		const locationName = this._locationName;
+		const locationPath = this._locationPath;
+		const parentId = this._parentItemId;
+		const parentName = this._parentItemName;
+		await bulkMissionDb.discardMission(this.missionId);
+		this.reset();
+		if (locationId && locationName && locationPath) {
+			this.start(locationId, locationName, locationPath);
+			this.setParentItem(parentId, parentName);
+		}
+		goto(resolve('/bulk-capture'));
+	}
+
+	async finishLocation(): Promise<void> {
+		await bulkMissionDb.discardMission(this.missionId);
+		this.reset();
+		goto(resolve('/location'));
 	}
 
 	async addPhotos(files: File[]): Promise<void> {
@@ -545,7 +567,8 @@ class BulkSweepWorkflow {
 				};
 			}
 			this._status = 'complete';
-			goto(resolve('/success'));
+			await this.persistMission();
+			goto(resolve('/bulk-complete'));
 			return true;
 		} catch (error) {
 			log.error('Bulk submission failed', error);
@@ -592,6 +615,7 @@ class BulkSweepWorkflow {
 				locationId: this._locationId,
 				parentItemId: this._parentItemId,
 				areaLabel: this._locationName ?? '',
+				locationPath: this._locationPath ?? this._locationName ?? '',
 				photoIds: this._photos.map((photo) => photo.id),
 				audioSegmentIds: this._audioSegments.map((audio) => audio.id),
 				transcriptSpanIds: this._transcriptSpans.map((span) => span.id),
