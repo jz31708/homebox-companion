@@ -20,7 +20,10 @@
 	let isRecording = $state(false);
 	let liveSupported = $state(false);
 
-	onMount(() => {
+	onMount(async () => {
+		if (!workflow.state.locationId) {
+			await workflow.recover();
+		}
 		if (!workflow.state.locationId) goto(resolve('/location'));
 		const SpeechRecognition =
 			(window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -31,9 +34,9 @@
 		stopNarration();
 	});
 
-	function addFiles(files: FileList | null) {
+	async function addFiles(files: FileList | null) {
 		if (!files?.length) return;
-		workflow.addPhotos(Array.from(files));
+		await workflow.addPhotos(Array.from(files));
 		if (fileInput) fileInput.value = '';
 	}
 

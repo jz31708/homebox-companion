@@ -170,7 +170,7 @@ class BulkSweepWorkflow {
 		return true;
 	}
 
-	addPhotos(files: File[]): void {
+	async addPhotos(files: File[]): Promise<void> {
 		if (!this._startedAtMs) this._startedAtMs = Date.now();
 		const now = Date.now();
 		const added = files.map((file) => ({
@@ -184,8 +184,8 @@ class BulkSweepWorkflow {
 			ignored: false,
 		}));
 		this._photos = [...this._photos, ...added];
-		for (const photo of added) {
-			void bulkMissionDb.addOrUpdatePhoto({
+		const writes = added.map((photo) =>
+			bulkMissionDb.addOrUpdatePhoto({
 				schemaVersion: 1,
 				missionId: this.missionId,
 				id: photo.id,
@@ -200,9 +200,10 @@ class BulkSweepWorkflow {
 				groupLabel: photo.groupLabel,
 				ignored: photo.ignored,
 				captureSequence: this._photos.length,
-			});
-		}
-		void this.persistMission();
+			})
+		);
+		await Promise.all(writes);
+		await this.persistMission();
 	}
 
 	updatePhoto(
