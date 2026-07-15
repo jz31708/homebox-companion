@@ -48,8 +48,9 @@ phases:
     evidence: tests/test_bulk_fusion.py, src/homebox_companion/tools/vision/bulk_fusion.py
   - id: 7
     name: final-review-board
-    status: pending
+    status: complete
     prompt: codex/08_PHASE_7_REVIEW.md
+    evidence: frontend/e2e/bulk-persistence.spec.ts
   - id: 8
     name: idempotent-candidate-submission
     status: pending

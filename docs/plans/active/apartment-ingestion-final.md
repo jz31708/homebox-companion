@@ -73,6 +73,20 @@ Passing unit tests or mocked UI tests alone never proves the product complete. D
 - Focused backend gate: `8 passed` in `tests/test_bulk_contracts.py` and the
   existing Bulk tests.
 - Frontend gate: `npm run check`, `npm run lint`, and `npm run build` passed.
+
+## Phase 7 evidence (2026-07-15)
+
+- Review board now has attention/ready/accepted/submitted/rejected/all tabs,
+  durable candidate selection through status changes, candidate editing with
+  explicit Save changes, manual missing-candidate creation, duplicate keep-new
+  resolution, evidence thumbnails, and a Homebox payload preview.
+- Candidate records and correction snapshots are persisted as plain structured
+  data after normalizing Svelte reactive proxies, and the review route recovers
+  candidates before redirecting.
+- Mobile Playwright gate: `5 passed`, including filter/edit/manual-candidate
+  persistence across reload, plus all prior capture, narration, and chunk
+  recovery scenarios.
+- Frontend gate: `npm run check`, `npm run lint`, and `npm run build` passed.
 - The repository-wide Prettier check remains a documented Phase 0 baseline
   failure; the new contract file is formatted.
 
