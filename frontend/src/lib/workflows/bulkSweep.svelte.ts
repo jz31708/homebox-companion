@@ -223,7 +223,7 @@ class BulkSweepWorkflow {
 			notes: candidate.notes ?? null,
 			custom_fields: candidate.customFields ?? {},
 			confidence: 0,
-			status: candidate.state === 'submitted' ? 'accepted' : candidate.state === 'accepted' ? 'accepted' : candidate.state === 'rejected' ? 'rejected' : 'needs_review',
+			status: candidate.state === 'submitted' ? 'submitted' : candidate.state === 'accepted' ? 'accepted' : candidate.state === 'rejected' ? 'rejected' : 'needs_review',
 			evidence: candidate.evidencePhotoIds.map((photoId) => ({ photoId, reason: 'Persisted candidate evidence' })),
 			sourcePhotoIds: candidate.evidencePhotoIds,
 			uncertaintyReasons: candidate.warningCodes,
@@ -438,7 +438,7 @@ class BulkSweepWorkflow {
 					schemaVersion: 2,
 					missionId: this.missionId,
 					id: candidate.id,
-					state: candidate.status === 'accepted' ? 'accepted' : 'needs_review',
+					state: candidate.status === 'submitted' ? 'submitted' : candidate.status === 'accepted' ? 'accepted' : 'needs_review',
 					reviewTier: candidate.uncertaintyReasons.length ? 'attention' : 'ready',
 					name: candidate.name,
 					quantity: Math.max(1, candidate.quantity),
@@ -531,7 +531,7 @@ class BulkSweepWorkflow {
 				schemaVersion: 2,
 				missionId: this.missionId,
 				id: candidate.id,
-				state: candidate.status === 'accepted' ? 'accepted' : candidate.status === 'rejected' ? 'rejected' : 'needs_review',
+				state: candidate.status === 'submitted' ? 'submitted' : candidate.status === 'accepted' ? 'accepted' : candidate.status === 'rejected' ? 'rejected' : 'needs_review',
 				reviewTier: candidate.uncertaintyReasons.length ? 'attention' : 'ready',
 				name: candidate.name,
 				quantity: Math.max(1, candidate.quantity),
@@ -641,8 +641,9 @@ class BulkSweepWorkflow {
 		}
 		this._status = 'submitting';
 		this._submissionProgress = { current: 0, total: accepted.length, message: 'Creating items...' };
+		let hasPartial = false;
 		try {
-		for (let i = 0; i < accepted.length; i++) {
+			for (let i = 0; i < accepted.length; i++) {
 				const candidate = accepted[i];
 				if (!this.isCandidateSubmittable(candidate)) {
 					this._error = `Candidate ${candidate.name || candidate.id} is blocked until review is complete.`;
@@ -656,6 +657,7 @@ class BulkSweepWorkflow {
 					serial_number: candidate.serial_number, purchase_price: candidate.purchase_price,
 					purchase_from: candidate.purchase_from, notes: candidate.notes,
 					custom_fields: candidate.custom_fields,
+					evidence_photo_ids: candidate.sourcePhotoIds,
 					existing_item_id:
 						candidate.suggestedAction === 'merge' ? candidate.duplicateExistingItemId : null,
 					existing_item_action: candidate.suggestedAction === 'merge' ? 'increase_quantity' : null,
@@ -663,19 +665,27 @@ class BulkSweepWorkflow {
 				const requestHash = JSON.stringify(payload);
 				await bulkMissionDb.saveOutbox({ schemaVersion: 2, missionId: this.missionId, id: `${this.missionId}:${candidate.id}`, candidateId: candidate.id, requestHash, status: 'sending', evidencePhotoIds: candidate.sourcePhotoIds, homeboxItemId: null, lastError: null, payloadSnapshot: payload, expectedAttachmentManifest: candidate.sourcePhotoIds, attachmentResults: Object.fromEntries(candidate.sourcePhotoIds.map((id) => [id, 'pending'])), stepState: 'reserved', attemptCount: 1 });
 				const attachments = candidate.sourcePhotoIds.map((photoId) => ({ photoId, file: this._photos.find((photo) => photo.id === photoId)?.file })).filter((entry): entry is { photoId: string; file: File } => Boolean(entry.file));
+				try {
 				const response = await items.submitBulkCandidate(this.missionId, candidate.id, payload, attachments, requestHash, { signal: this.abortController?.signal });
-				candidate.status = response.status === 'complete' ? 'accepted' : 'needs_review';
+				candidate.status = response.status === 'complete' ? 'submitted' : 'needs_review';
+				hasPartial ||= response.status !== 'complete';
 				await bulkMissionDb.saveOutbox({ schemaVersion: 2, missionId: this.missionId, id: `${this.missionId}:${candidate.id}`, candidateId: candidate.id, requestHash, status: response.status === 'complete' ? 'complete' : 'partial', evidencePhotoIds: candidate.sourcePhotoIds, homeboxItemId: response.homeboxItemId ?? null, lastError: response.status === 'complete' ? null : { code: 'ATTACHMENTS_PARTIAL', message: 'Some attachments need retry', retryable: true }, payloadSnapshot: payload, expectedAttachmentManifest: candidate.sourcePhotoIds, attachmentResults: Object.fromEntries(candidate.sourcePhotoIds.map((id) => [id, response.attachments?.find((attachment) => attachment.photoId === id)?.status === 'complete' ? 'complete' : 'failed'])), stepState: response.status === 'complete' ? 'complete' : 'partial', attemptCount: 1 });
+				} catch (error) {
+					hasPartial = true;
+					candidate.status = 'needs_review';
+					this._error = `Submission for ${candidate.name} failed; other candidates continued.`;
+					await bulkMissionDb.saveOutbox({ schemaVersion: 2, missionId: this.missionId, id: `${this.missionId}:${candidate.id}`, candidateId: candidate.id, requestHash, status: 'failed', evidencePhotoIds: candidate.sourcePhotoIds, homeboxItemId: null, lastError: { code: 'SUBMISSION_FAILED', message: error instanceof Error ? error.message : 'Submission failed', retryable: true }, payloadSnapshot: payload, expectedAttachmentManifest: candidate.sourcePhotoIds, attachmentResults: Object.fromEntries(candidate.sourcePhotoIds.map((id) => [id, 'failed'])), stepState: 'failed', attemptCount: 1 });
+				}
 				this._submissionProgress = {
 					current: i + 1,
 					total: accepted.length,
 					message: `Submitted ${i + 1} of ${accepted.length}...`,
 				};
 			}
-			this._status = 'complete';
+			this._status = hasPartial ? 'reviewing' : 'complete';
 			await this.persistMission();
-			goto(resolve('/bulk-complete'));
-			return true;
+			if (!hasPartial) goto(resolve('/bulk-complete'));
+			return !hasPartial;
 		} catch (error) {
 			log.error('Bulk submission failed', error);
 			this._error = error instanceof Error ? error.message : 'Bulk submission failed';

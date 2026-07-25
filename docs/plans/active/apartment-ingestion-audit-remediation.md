@@ -61,6 +61,18 @@ narration fallback, completed-chunk resume, review reload, 30-photo durability,
 and two-shutter camera capture. `svelte-check` reported 0 errors, ESLint
 reported 0 errors, and the production build completed successfully.
 
+## Phase 5 evidence
+
+Phase 5 submission-idempotency-and-recovery gate passed on 2026-07-25. The
+server computes and stores its own canonical operation hash, rejects key reuse
+across mission/candidate/payload identity, persists expected photo manifests,
+preserves existing Homebox fields on quantity increases, and reports partial
+until every expected attachment is complete. The frontend stores payload and
+per-photo outbox state, continues independent candidates after one failure,
+and records submitted/partial/failed outcomes for reload recovery. Focused
+submission tests passed 3/3; frontend svelte-check, ESLint, production build,
+and browser persistence tests passed (7/7).
+
 Phase 0 still requires the pushed correction and independent review/draft PR
 gate.
 Later phases must correct the audited camera, narration, observe/fuse,

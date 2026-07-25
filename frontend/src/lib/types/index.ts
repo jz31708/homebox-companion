@@ -221,7 +221,7 @@ export interface ScanState {
 
 export type BulkTranscriptSource = 'none' | 'live' | 'server' | 'manual' | 'mixed';
 export type BulkTranscriptStatus = 'pending' | 'transcribing' | 'done' | 'failed';
-export type BulkCandidateStatus = 'pending' | 'accepted' | 'rejected' | 'needs_review';
+export type BulkCandidateStatus = 'pending' | 'accepted' | 'submitted' | 'rejected' | 'needs_review';
 
 export type BulkSweepStatus =
 	| 'idle'

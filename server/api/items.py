@@ -37,6 +37,13 @@ async def submit_bulk_candidate(
         reservation = bulk_ledger.reserve(idempotency_key, request_hash, mission_id, candidate_id, payload)
     except (json.JSONDecodeError, IdempotencyConflict) as exc:
         raise HTTPException(status_code=409 if isinstance(exc, IdempotencyConflict) else 400, detail=str(exc)) from exc
+    expected_photo_ids = [
+        (upload.filename or "").partition("|")[0]
+        for upload in attachments or []
+        if (upload.filename or "").partition("|")[0]
+    ]
+    if expected_photo_ids:
+        bulk_ledger.set_expected_photo_ids(idempotency_key, expected_photo_ids)
     item_id = reservation.get("homebox_item_id")
     if not item_id:
         try:
@@ -52,6 +59,13 @@ async def submit_bulk_candidate(
                         "quantity": int(existing.get("quantity", 1)) + int(payload.get("quantity", 1)),
                         "parentId": existing.get("parent", {}).get("id"),
                         "tagIds": [tag.get("id") for tag in existing.get("tags", []) if tag.get("id")],
+                        "manufacturer": existing.get("manufacturer"),
+                        "modelNumber": existing.get("modelNumber"),
+                        "serialNumber": existing.get("serialNumber"),
+                        "purchasePrice": existing.get("purchasePrice"),
+                        "purchaseFrom": existing.get("purchaseFrom"),
+                        "notes": existing.get("notes"),
+                        "fields": existing.get("fields", []),
                     },
                 )
             else:
@@ -143,7 +157,10 @@ async def submit_bulk_candidate(
             results.append(
                 {"photoId": photo_id, "status": "failed", "error": "attachment upload failed", "retryable": True}
             )
-    status = "complete" if all(result["status"] == "complete" for result in results) else "attachments_partial"
+    operation = bulk_ledger.operation(idempotency_key) or {}
+    expected = set(json.loads(operation.get("expected_photo_ids_json") or "[]"))
+    completed = {entry["photo_id"] for entry in operation.get("attachments", []) if entry["status"] == "complete"}
+    status = "complete" if expected.issubset(completed) else "attachments_partial"
     return JSONResponse(
         status_code=200 if status == "complete" else 207,
         content={"status": status, "candidateId": candidate_id, "homeboxItemId": item_id, "attachments": results},
