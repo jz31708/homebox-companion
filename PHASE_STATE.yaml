@@ -53,8 +53,9 @@ phases:
     evidence: tests, frontend/e2e/bulk-persistence.spec.ts, docs/plans/active/apartment-ingestion-audit-remediation.md
   - id: 7
     name: redeploy-and-disposable-reacceptance
-    status: pending
+    status: complete
     prompt: audit-remediation/codex/08_REDEPLOY_REACCEPT.md
+    evidence: audit-remediation/runtime-redeploy-2026-07-25.md, docs/plans/active/apartment-ingestion-audit-remediation.md
   - id: 8
     name: physical-pilot-closeout
     status: blocked

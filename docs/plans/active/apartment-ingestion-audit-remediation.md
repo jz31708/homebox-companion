@@ -84,6 +84,19 @@ suite passed 7/7. This is automated evidence only; independent re-review,
 redeployment, disposable acceptance, and the physical pilot remain required
 before release completion.
 
+## Phase 7 evidence
+
+Phase 7 deployment/reacceptance passed on 2026-07-25. Commit `d01152f` is
+deployed to LXC 258 as immutable local tag
+`homebox-companion:phase7-d01152f-d4c80296`, digest
+`sha256:d4c80296e74d17aed27a7fc6b8d08c0669f308de5cfd4e6e01c920544f9cc0a9`.
+The container is running and healthy. Direct and proxied version checks both
+return 3.0.2; Medicine routes/catalog remain available; unauthenticated
+Medicine listing and transcription are rejected with 401; persistent data was
+retained. Full evidence is in
+`audit-remediation/runtime-redeploy-2026-07-25.md`. The physical pilot is
+still blocked by instruction, so the overall release is not complete.
+
 Phase 0 still requires the pushed correction and independent review/draft PR
 gate.
 Later phases must correct the audited camera, narration, observe/fuse,
