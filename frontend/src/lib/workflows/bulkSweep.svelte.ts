@@ -128,6 +128,39 @@ class BulkSweepWorkflow {
 		void this.persistMission();
 	}
 
+	async transcribeAudioSegment(segmentId: string): Promise<void> {
+		const segment = this._audioSegments.find((entry) => entry.id === segmentId);
+		if (!segment) return;
+		try {
+			const result = await vision.transcribeAudio(segment.file, `${segmentId}.webm`);
+			const text = result.text.trim();
+			if (!text) throw new Error('Server returned an empty transcript');
+			this._audioSegments = this._audioSegments.map((entry) =>
+				entry.id === segmentId ? { ...entry, transcriptStatus: 'done', rawTranscript: text } : entry
+			);
+			this.appendLiveTranscript(text, true);
+			await bulkMissionDb.addOrUpdateAudio({
+				schemaVersion: 2,
+				missionId: this.missionId,
+				id: segmentId,
+				status: 'done',
+				blob: segment.file,
+				mimeType: segment.mimeType,
+				byteSize: segment.file.size,
+				startedAtMs: segment.startedAtMs,
+				endedAtMs: segment.endedAtMs,
+				rawTranscript: text,
+				transcript: text,
+				source: 'server',
+				error: null,
+				retryCount: 0,
+			});
+			await this.persistMission();
+		} catch (error) {
+			log.warn('Bulk server transcription unavailable; audio remains persisted', error);
+		}
+	}
+
 	setParentItem(id: string | null, name: string | null): void {
 		this._parentItemId = id;
 		this._parentItemName = name;

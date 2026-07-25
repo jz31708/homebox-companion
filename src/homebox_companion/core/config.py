@@ -17,6 +17,10 @@ Environment Variables:
     HBC_LLM_ALLOW_UNSAFE_MODELS: If true, allow models not in the curated allowlist (best-effort)
     HBC_LLM_TIMEOUT: LLM request timeout in seconds (default: 120)
     HBC_LLM_STREAM_TIMEOUT: LLM streaming timeout in seconds (default: 300)
+    HBC_TRANSCRIPTION_API_KEY: Optional OpenAI-compatible transcription key
+        (falls back to HBC_LLM_API_KEY)
+    HBC_TRANSCRIPTION_API_BASE: Optional transcription provider base URL
+    HBC_TRANSCRIPTION_MODEL: Transcription model identifier (default: whisper-1)
     HBC_SERVER_HOST: Host to bind the web server to (default: 0.0.0.0)
     HBC_SERVER_PORT: Port for the web server (default: 8000). In production,
         this single port serves both the API and the static frontend.
@@ -93,6 +97,11 @@ class Settings(BaseSettings):
     llm_model: str = ""
     llm_api_base: str | None = None
     llm_allow_unsafe_models: bool = False
+
+    transcription_api_key: str = ""
+    transcription_api_base: str | None = None
+    transcription_model: str = "whisper-1"
+    transcription_timeout: int = 120
 
     # Web server configuration
     server_host: str = "0.0.0.0"
@@ -178,6 +187,12 @@ class Settings(BaseSettings):
     def effective_llm_model(self) -> str:
         """Effective LLM model (HBC_LLM_MODEL preferred, fallback to HBC_OPENAI_MODEL)."""
         return (self.llm_model or self.openai_model or "gpt-5-mini").strip()
+
+    @computed_field
+    @property
+    def effective_transcription_api_key(self) -> str:
+        """Explicit transcription key, falling back to the configured LLM key."""
+        return (self.transcription_api_key or self.effective_llm_api_key).strip()
 
     @computed_field
     @property

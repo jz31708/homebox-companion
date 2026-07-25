@@ -66,6 +66,10 @@
 					recordingStartedAt - (workflow.state.startedAtMs ?? recordingStartedAt),
 					Date.now() - (workflow.state.startedAtMs ?? Date.now())
 				);
+				if (!speechRecognition) {
+					const segment = workflow.state.audioSegments.at(-1);
+					if (segment) void workflow.transcribeAudioSegment(segment.id);
+				}
 				stream.getTracks().forEach((track) => track.stop());
 			};
 			mediaRecorder.start();

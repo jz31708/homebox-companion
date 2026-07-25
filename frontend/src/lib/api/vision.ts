@@ -18,6 +18,15 @@ import type {
 	MedicineDetectResponse,
 } from '../types';
 
+export async function transcribeAudio(audio: Blob, filename = 'narration.webm'): Promise<{ text: string }> {
+	const form = new FormData();
+	form.append('audio', audio, filename);
+	return requestFormData<{ text: string }>('/tools/audio/transcribe', form, {
+		timeout: 120_000,
+		errorMessage: 'Server transcription failed',
+	});
+}
+
 export interface DetectOptions {
 	singleItem?: boolean;
 	extraInstructions?: string;
@@ -104,6 +113,7 @@ async function buildVisionHeaders(): Promise<Record<string, string>> {
 }
 
 export const vision = {
+	transcribeAudio,
 	/**
 	 * Detect items from a single image
 	 */

@@ -83,3 +83,15 @@ The Phase 0-only correction files are the root `PHASE_STATE.yaml`,
 historical implementation files are deliberately separate from that list.
 The deployed runtime after containment and the confirmation that no Phase 1
 fix was performed are recorded in the runtime evidence file.
+
+## Phase 2 evidence
+
+Phase 2 narration-security-and-runtime passed on 2026-07-25. The server
+transcription route requires bearer auth, uses real `Settings` with explicit
+transcription configuration and LLM-key fallback, validates MIME/empty/size
+inputs, handles provider failures and malformed JSON, and does not log
+transcript/provider payloads. Browser SpeechRecognition remains optional;
+without it, persisted audio is sent to server transcription and the returned
+canonical transcript is persisted, while failures preserve the audio for
+retry. `pytest tests/test_audio_transcription.py -q` passed 3/3, Ruff passed,
+frontend svelte-check passed with 0 errors, and ESLint passed with 0 errors.
