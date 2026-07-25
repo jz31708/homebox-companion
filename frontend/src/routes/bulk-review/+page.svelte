@@ -55,8 +55,7 @@
 	<div class="mb-4 flex gap-2">
 		<Button
 			variant="secondary"
-			onclick={() =>
-				workflow.state.candidates.forEach((c) => workflow.setCandidateStatus(c.id, 'accepted'))}
+			onclick={() => workflow.acceptReadyCandidates()}
 			>Accept all</Button
 		>
 	</div>

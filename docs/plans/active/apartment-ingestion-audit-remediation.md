@@ -94,6 +94,17 @@ Failed chunks remain pending/retryable and abort leaves later chunks pending.
 The browser suite passed 7/7, including the completed-chunk retry scenario;
 focused backend contract/observation/fusion/audio tests passed 17/17.
 
+## Phase 4 evidence
+
+Phase 4 review-and-candidate-fidelity gate passed on 2026-07-25. Candidate
+acceptance now requires a non-empty name, photo evidence, quantity, and no
+unresolved uncertainty; the submit path repeats that guard independently.
+Accept-all is limited to candidates meeting the same safe predicate. Review
+continues to expose evidence thumbnails, evidence reasons, duplicate actions,
+editable core fields, payload preview, and durable candidate state. The
+browser persistence suite passed 7/7; svelte-check reported 0 errors, ESLint
+reported 0 errors, and the production build completed successfully.
+
 ## Phase 2 evidence
 
 Phase 2 narration-security-and-runtime passed on 2026-07-25. The server

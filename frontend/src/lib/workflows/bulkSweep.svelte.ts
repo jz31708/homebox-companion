@@ -503,7 +503,25 @@ class BulkSweepWorkflow {
 	}
 
 	setCandidateStatus(id: string, status: BulkCandidateItem['status']): void {
+		if (status === 'accepted') {
+			const candidate = this._candidates.find((entry) => entry.id === id);
+			if (!candidate || !this.isCandidateSubmittable(candidate)) {
+				this._error = 'Resolve evidence, quantity, and duplicate warnings before accepting this candidate.';
+				return;
+			}
+		}
 		this.updateCandidate(id, { status });
+	}
+
+	private isCandidateSubmittable(candidate: BulkCandidateItem): boolean {
+		return Boolean(candidate.name.trim()) && candidate.sourcePhotoIds.length > 0 && candidate.uncertaintyReasons.length === 0 && candidate.quantity >= 1;
+	}
+
+	acceptReadyCandidates(): void {
+		this._candidates = this._candidates.map((candidate) =>
+			this.isCandidateSubmittable(candidate) ? { ...candidate, status: 'accepted' } : candidate
+		);
+		void this.persistCandidateRecords();
 	}
 
 	private async persistCandidateRecords(): Promise<void> {
@@ -608,9 +626,7 @@ class BulkSweepWorkflow {
 	}
 
 	acceptHighConfidence(): void {
-		this._candidates = this._candidates.map((candidate) =>
-			candidate.confidence >= 0.9 ? { ...candidate, status: 'accepted' } : candidate
-		);
+		this.acceptReadyCandidates();
 	}
 
 	get acceptedCandidates(): BulkCandidateItem[] {
@@ -626,8 +642,13 @@ class BulkSweepWorkflow {
 		this._status = 'submitting';
 		this._submissionProgress = { current: 0, total: accepted.length, message: 'Creating items...' };
 		try {
-			for (let i = 0; i < accepted.length; i++) {
+		for (let i = 0; i < accepted.length; i++) {
 				const candidate = accepted[i];
+				if (!this.isCandidateSubmittable(candidate)) {
+					this._error = `Candidate ${candidate.name || candidate.id} is blocked until review is complete.`;
+					this._status = 'reviewing';
+					return false;
+				}
 				const payload = {
 					name: candidate.name, quantity: candidate.quantity, description: candidate.description,
 					tag_ids: candidate.tag_ids, parent_id: this._parentItemId,
