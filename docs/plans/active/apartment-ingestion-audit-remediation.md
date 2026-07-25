@@ -73,6 +73,17 @@ and records submitted/partial/failed outcomes for reload recovery. Focused
 submission tests passed 3/3; frontend svelte-check, ESLint, production build,
 and browser persistence tests passed (7/7).
 
+## Phase 6 evidence
+
+Phase 6 automated-validation gate passed on 2026-07-25. The full backend suite
+passed 230/230 selected tests with no relevant skips, including Classic
+Capture, Medicine Intake/Catalog, Bulk contracts/observation/fusion,
+submission, auth, and error paths. Frontend svelte-check and ESLint reported
+0 errors, the production build completed, and the mobile browser persistence
+suite passed 7/7. This is automated evidence only; independent re-review,
+redeployment, disposable acceptance, and the physical pilot remain required
+before release completion.
+
 Phase 0 still requires the pushed correction and independent review/draft PR
 gate.
 Later phases must correct the audited camera, narration, observe/fuse,
