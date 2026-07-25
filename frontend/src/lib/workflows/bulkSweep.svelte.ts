@@ -3,7 +3,7 @@ import { resolve } from '$app/paths';
 import { items, vision } from '$lib/api';
 import * as bulkMissionDb from '$lib/services/bulkMissionDb';
 import { planBulkObservationChunks } from '$lib/services/bulkAnalysisPlanner';
-import type { BulkCandidateRecord } from '$lib/types/bulkDomain';
+import type { BulkCandidateRecord, BulkPhotoRecord } from '$lib/types/bulkDomain';
 import { workflowLogger as log } from '$lib/utils/logger';
 import type {
 	BulkAudioSegment,
@@ -36,6 +36,7 @@ class BulkSweepWorkflow {
 	private _parentItemName = $state<string | null>(null);
 	private _startedAtMs = $state<number | null>(null);
 	private _createdAtMs = $state<number | null>(null);
+	private _nextCaptureSequence = $state(0);
 	private _photos = $state<BulkCapturedPhoto[]>([]);
 	private _audioSegments = $state<BulkAudioSegment[]>([]);
 	private _transcriptSpans = $state<BulkTranscriptSpan[]>([]);
@@ -124,6 +125,7 @@ class BulkSweepWorkflow {
 		this._locationPath = locationPath;
 		this._startedAtMs = Date.now();
 		this._createdAtMs = this._startedAtMs;
+		this._nextCaptureSequence = 0;
 		this._areaLabel = null;
 		void this.persistMission();
 	}
@@ -191,6 +193,7 @@ class BulkSweepWorkflow {
 		this._parentItemId = mission.parentItemId;
 		this._startedAtMs = mission.startedAtMs ?? mission.updatedAtMs;
 		this._createdAtMs = mission.createdAtMs ?? mission.startedAtMs ?? mission.updatedAtMs;
+		this._nextCaptureSequence = mission.nextCaptureSequence ?? mission.photoIds.length;
 		this._rawTranscriptText = mission.rawTranscript ?? '';
 		this._editedTranscriptText =
 			mission.editedTranscript ?? mission.canonicalTranscript ?? this._rawTranscriptText;
@@ -305,27 +308,48 @@ class BulkSweepWorkflow {
 			groupLabel: '',
 			ignored: false,
 		}));
-		const existingCount = this._photos.length;
-		const writes = added.map((photo) =>
-			bulkMissionDb.addOrUpdatePhoto({
-				schemaVersion: 2,
-				missionId: this.missionId,
-				id: photo.id,
-				status: 'ready',
-				blob: photo.file,
-				filename: photo.file.name,
-				mimeType: photo.file.type || 'image/jpeg',
-				byteSize: photo.file.size,
-				takenAtMs: photo.takenAtMs,
-				sessionOffsetMs: photo.sessionOffsetMs,
-				note: photo.note,
-				groupLabel: photo.groupLabel,
-				ignored: photo.ignored,
-				captureSequence: existingCount + added.indexOf(photo) + 1,
-			})
-		);
+		const firstSequence = this._nextCaptureSequence;
+		const records: BulkPhotoRecord[] = added.map((photo, index) => ({
+			schemaVersion: 2,
+			missionId: this.missionId,
+			id: photo.id,
+			status: 'ready',
+			blob: photo.file,
+			filename: photo.file.name,
+			mimeType: photo.file.type || 'image/jpeg',
+			byteSize: photo.file.size,
+			takenAtMs: photo.takenAtMs,
+			sessionOffsetMs: photo.sessionOffsetMs,
+			note: photo.note,
+			groupLabel: photo.groupLabel,
+			ignored: photo.ignored,
+			captureSequence: firstSequence + index,
+		}));
 		try {
-			await Promise.all(writes);
+			await bulkMissionDb.appendPhotosAndUpdateMission(
+				{
+					schemaVersion: 2,
+					id: this.missionId,
+					status: this._status,
+					locationId: this._locationId ?? '',
+					locationName: this._locationName ?? '',
+					locationPath: this._locationPath ?? '',
+					parentItemId: this._parentItemId,
+					areaLabel: this._areaLabel ?? '',
+					createdAtMs: this._createdAtMs ?? now,
+					startedAtMs: this._startedAtMs ?? now,
+					updatedAtMs: now,
+					photoIds: [],
+					audioSegmentIds: [],
+					transcriptSpanIds: [],
+					observationChunkIds: [],
+					candidateIds: [],
+					outboxOperationIds: [],
+					chunkSize: 6,
+					lastError: null,
+				},
+				records
+			);
 		} catch (error) {
 			for (const photo of added) safeRevoke(photo.previewUrl);
 			throw new Error('Photo could not be saved. Earlier evidence was preserved.', {
@@ -333,7 +357,7 @@ class BulkSweepWorkflow {
 			});
 		}
 		this._photos = [...this._photos, ...added];
-		await this.persistMission();
+		this._nextCaptureSequence += records.length;
 	}
 
 	updatePhoto(
@@ -361,12 +385,15 @@ class BulkSweepWorkflow {
 			});
 	}
 
-	removePhoto(id: string): void {
+	async removePhoto(id: string): Promise<void> {
 		const removed = this._photos.find((photo) => photo.id === id);
+		await bulkMissionDb.removePhoto(this.missionId, id);
 		if (removed) safeRevoke(removed.previewUrl);
 		this._photos = this._photos.filter((photo) => photo.id !== id);
-		void bulkMissionDb.removePhoto(this.missionId, id);
-		void this.persistMission();
+		this._candidates = this._candidates.filter(
+			(candidate) => !candidate.sourcePhotoIds.includes(id)
+		);
+		await this.persistCandidateRecords();
 	}
 
 	addAudioSegment(blob: Blob, mimeType: string, startedAtMs: number, endedAtMs: number): void {
@@ -1027,6 +1054,7 @@ class BulkSweepWorkflow {
 		this._parentItemName = null;
 		this._startedAtMs = null;
 		this._createdAtMs = null;
+		this._nextCaptureSequence = 0;
 		this._photos = [];
 		this._audioSegments = [];
 		this._transcriptSpans = [];

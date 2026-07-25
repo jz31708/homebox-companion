@@ -51,3 +51,14 @@ additional test coverage before Phase 1 can be marked complete.
 
 No narration, observe/fuse, review redesign, submission remediation,
 deployment, runtime acceptance, or physical pilot work is being started.
+
+## Phase 1 correction 2 evidence
+
+The follow-up correction adds one transactional photo-plus-mission append
+operation, a durable non-reused capture sequence, awaited photo removal,
+lossless transcript/candidate persistence, mission ID-list updates, and
+transactional candidate replacement. Camera persistence failures revoke only
+the failed batch URLs and leave prior evidence intact. Frontend validation
+passed with 0 svelte-check errors, 0 ESLint errors, a successful production
+build, and the existing Bulk E2E file passed 7/7. Phase 1 remains in progress
+pending senior review of the explicit failure/migration round-trip matrix.

@@ -268,7 +268,7 @@
 							class="btn-icon"
 							type="button"
 							aria-label="Remove photo"
-							onclick={() => workflow.removePhoto(photo.id)}
+							onclick={() => void workflow.removePhoto(photo.id)}
 						>
 							<Trash2 size={16} strokeWidth={1.5} />
 						</button>

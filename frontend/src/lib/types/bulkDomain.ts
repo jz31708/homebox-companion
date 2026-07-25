@@ -48,6 +48,7 @@ export interface BulkMissionRecord {
 	editedTranscript?: string;
 	transcriptEdited?: boolean;
 	transcriptSource?: 'none' | 'live' | 'manual' | 'mixed' | 'server';
+	nextCaptureSequence?: number;
 }
 
 export interface BulkPhotoRecord {

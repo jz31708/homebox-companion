@@ -111,6 +111,35 @@ export async function addOrUpdatePhoto(photo: BulkPhotoRecord): Promise<void> {
 	await put('photos', photo, photo.id, photo.missionId);
 }
 
+export async function appendPhotosAndUpdateMission(
+	mission: BulkMissionRecord,
+	photos: BulkPhotoRecord[]
+): Promise<BulkMissionRecord> {
+	return serializedWrite(async () => {
+		const db = await getDb();
+		const tx = db.transaction(['missions', 'photos'], 'readwrite');
+		const current = (await tx.objectStore('missions').get(mission.id)) as
+			BulkMissionRecord | undefined;
+		if (!current) throw new Error('Bulk mission is not durable');
+		const next = Math.max(
+			current.nextCaptureSequence ?? 0,
+			...photos.map((photo) => photo.captureSequence + 1)
+		);
+		for (const photo of photos)
+			await tx.objectStore('photos').put(photo, key(mission.id, photo.id));
+		const updated: BulkMissionRecord = {
+			...current,
+			...mission,
+			photoIds: [...current.photoIds, ...photos.map((photo) => photo.id)],
+			updatedAtMs: Date.now(),
+			nextCaptureSequence: next,
+		};
+		await tx.objectStore('missions').put(updated, mission.id);
+		await tx.done;
+		return updated;
+	});
+}
+
 export async function removePhoto(missionId: string, photoId: string): Promise<void> {
 	return serializedWrite(async () => {
 		const db = await getDb();
@@ -167,7 +196,7 @@ export async function replaceCandidates(
 ): Promise<void> {
 	await serializedWrite(async () => {
 		const db = await getDb();
-		const tx = db.transaction(['candidates', 'meta'], 'readwrite');
+		const tx = db.transaction(['missions', 'candidates', 'meta'], 'readwrite');
 		const keys = await tx.objectStore('candidates').getAllKeys();
 		for (const current of keys) {
 			if (String(current).startsWith(`${missionId}:`))
@@ -175,6 +204,13 @@ export async function replaceCandidates(
 		}
 		for (const candidate of candidates) {
 			await tx.objectStore('candidates').put(candidate, key(missionId, candidate.id));
+		}
+		const mission = (await tx.objectStore('missions').get(missionId)) as
+			BulkMissionRecord | undefined;
+		if (mission) {
+			mission.candidateIds = candidates.map((candidate) => candidate.id);
+			mission.updatedAtMs = Date.now();
+			await tx.objectStore('missions').put(mission, missionId);
 		}
 		await tx.objectStore('meta').delete(`candidate-snapshot:${missionId}`);
 		await tx.done;
