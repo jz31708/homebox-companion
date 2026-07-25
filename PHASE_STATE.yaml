@@ -18,7 +18,7 @@ rules:
 phases:
   - id: 0
     name: branch-truth-and-runtime-containment
-    status: in_progress
+    status: complete
     prompt: audit-remediation/codex/01_BRANCH_TRUTH_AND_CONTAINMENT.md
     evidence: docs/plans/active/apartment-ingestion-audit-remediation.md, audit-remediation/runtime-containment-2026-07-15.md
   - id: 1

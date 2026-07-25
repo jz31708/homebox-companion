@@ -20,7 +20,7 @@ rules:
 phases:
   - id: 0
     name: branch-truth-and-runtime-containment
-    status: in_progress
+    status: complete
     prompt: codex/01_BRANCH_TRUTH_AND_CONTAINMENT.md
   - id: 1
     name: camera-context-and-lossless-persistence
