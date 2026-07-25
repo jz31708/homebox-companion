@@ -407,23 +407,28 @@ class BulkSweepWorkflow {
 			const plans = planBulkObservationChunks(this.missionId, this._photos, this._transcriptSpans);
 			const bundle = await bulkMissionDb.loadMissionBundle(this.missionId);
 			const completed = new Set((bundle?.chunks ?? []).filter((chunk) => chunk.status === 'complete').map((chunk) => chunk.id));
-			const candidates: BulkCandidateItem[] = [];
+			const observations: any[] = [];
 			const warnings: string[] = [];
+			let hasFailedChunks = false;
 			for (const plan of plans) {
 				if (completed.has(plan.id)) continue;
 				await bulkMissionDb.saveChunk({ schemaVersion: 2, missionId: this.missionId, id: plan.id, status: 'analyzing', photoIds: plan.photoIds, transcriptSpanIds: plan.transcriptSpanIds, requestHash: plan.requestHash, observations: [], error: null });
 				try {
-					const result = await vision.bulkDetect({ photos: activePhotos.filter((photo) => plan.photoIds.includes(photo.id)), allPhotos: this._photos, locationId: this._locationId, locationName: this._locationName, locationPath: this._locationPath, parentItemId: this._parentItemId, editedTranscript: this._editedTranscriptText, transcriptSpans: this._transcriptSpans, photoIds: plan.photoIds }, { signal: this.abortController.signal });
-					candidates.push(...result.candidates);
+					const result = await vision.bulkObserve({ photos: activePhotos.filter((photo) => plan.photoIds.includes(photo.id)), photoIds: plan.photoIds, chunkId: plan.id, editedTranscript: this._editedTranscriptText, transcriptSpans: this._transcriptSpans }, { signal: this.abortController.signal });
 					warnings.push(...result.warnings);
-					await bulkMissionDb.saveChunk({ schemaVersion: 2, missionId: this.missionId, id: plan.id, status: 'complete', photoIds: plan.photoIds, transcriptSpanIds: plan.transcriptSpanIds, requestHash: plan.requestHash, observations: result.candidates.map((candidate) => ({ schemaVersion: 2, missionId: this.missionId, id: `${plan.id}:${candidate.id}`, photoIds: candidate.sourcePhotoIds, transcriptSpanIds: candidate.evidence.map((evidence) => evidence.transcriptSpanId).filter((id): id is string => Boolean(id)), name: candidate.name, evidence: candidate.evidence })), error: null });
+					observations.push(...result.observations);
+					await bulkMissionDb.saveChunk({ schemaVersion: 2, missionId: this.missionId, id: plan.id, status: 'complete', photoIds: plan.photoIds, transcriptSpanIds: plan.transcriptSpanIds, requestHash: plan.requestHash, observations: result.observations.map((observation) => ({ schemaVersion: 2, missionId: this.missionId, id: `${plan.id}:${observation.id}`, photoIds: observation.photoIds, transcriptSpanIds: observation.transcriptSpanIds, name: observation.name, evidence: observation.evidence })), error: null });
 				} catch (error) {
+					hasFailedChunks = true;
 					await bulkMissionDb.saveChunk({ schemaVersion: 2, missionId: this.missionId, id: plan.id, status: 'failed', photoIds: plan.photoIds, transcriptSpanIds: plan.transcriptSpanIds, requestHash: plan.requestHash, observations: [], error: { code: 'OBSERVATION_CHUNK_FAILED', message: error instanceof Error ? error.message : 'Observation failed', retryable: true } });
 					warnings.push(`Chunk ${plan.id} failed; retry it independently.`);
 				}
 				this._analysisProgress = { current: Math.min(activePhotos.length, this._analysisProgress.current + plan.photoIds.length), total: activePhotos.length, message: `Analyzed ${Math.min(activePhotos.length, this._analysisProgress.current + plan.photoIds.length)} of ${activePhotos.length} photos` };
 			}
-			const result = { candidates, warnings, stats: { photo_count: activePhotos.length, ignored_photo_count: this._photos.length - activePhotos.length, candidate_count: candidates.length, low_confidence_count: candidates.filter((candidate) => candidate.confidence < 0.6).length } } as BulkDetectResponse;
+			const stored = await bulkMissionDb.loadMissionBundle(this.missionId);
+			const allObservations = (stored?.chunks ?? []).filter((chunk) => chunk.status === 'complete').flatMap((chunk) => chunk.observations);
+			const candidates = await vision.bulkFuse({ missionId: this.missionId, observations: allObservations.map((observation) => ({ ...observation, photo_ids: observation.photoIds, transcript_span_ids: observation.transcriptSpanIds, evidence: observation.evidence.map((ref: { photoId?: string; transcriptSpanId?: string }) => ({ ...ref, photo_id: ref.photoId, transcript_span_id: ref.transcriptSpanId })) })), transcript: this._editedTranscriptText });
+			const result = { candidates, warnings, stats: { photo_count: activePhotos.length, ignored_photo_count: this._photos.length - activePhotos.length, candidate_count: candidates.length, low_confidence_count: 0 } } as BulkDetectResponse;
 			this._candidates = this.attachLocalFiles(candidates);
 			this._warnings = warnings;
 			this._stats = result.stats;
@@ -439,9 +444,9 @@ class BulkSweepWorkflow {
 					quantity: Math.max(1, candidate.quantity),
 					entityMode: candidate.quantity > 1 ? 'grouped' : 'individual',
 					quantityBasis: candidate.quantity > 1 ? 'unknown' : 'distinct_entities',
-					sourceObservationIds: candidate.sourcePhotoIds.map((photoId) => `${this.missionId}:photo:${photoId}`),
+					sourceObservationIds: candidate.sourcePhotoIds.map((photoId: string) => `${this.missionId}:photo:${photoId}`),
 					evidencePhotoIds: candidate.sourcePhotoIds,
-					evidenceTranscriptSpanIds: candidate.evidence.map((ref) => ref.transcriptSpanId).filter((id): id is string => Boolean(id)),
+					evidenceTranscriptSpanIds: candidate.evidence.map((ref: { transcriptSpanId?: string }) => ref.transcriptSpanId).filter((id: string | undefined): id is string => Boolean(id)),
 					blockerCodes: [],
 					warningCodes: candidate.quantity > 1 ? ['quantity_unconfirmed'] : [],
 					duplicateMatches: [],
@@ -461,7 +466,7 @@ class BulkSweepWorkflow {
 				}))
 			);
 			await this.persistMission();
-			this._status = 'reviewing';
+			this._status = hasFailedChunks ? 'transcript_review' : 'reviewing';
 			return result;
 		} catch (error) {
 			if (error instanceof Error && error.name === 'AbortError') {

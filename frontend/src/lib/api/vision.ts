@@ -16,6 +16,7 @@ import type {
 	BulkTranscriptSpan,
 	MedicineCapturedPhoto,
 	MedicineDetectResponse,
+	BulkCandidateItem,
 } from '../types';
 
 export async function transcribeAudio(audio: Blob, filename = 'narration.webm'): Promise<{ text: string }> {
@@ -61,6 +62,14 @@ export interface BulkDetectInput {
 	editedTranscript: string;
 	transcriptSpans: BulkTranscriptSpan[];
 	photoIds?: string[];
+}
+
+export interface BulkObserveInput {
+	photos: BulkCapturedPhoto[];
+	photoIds: string[];
+	chunkId: string;
+	transcriptSpans: BulkTranscriptSpan[];
+	editedTranscript: string;
 }
 
 export interface MedicineDetectOptions {
@@ -273,6 +282,36 @@ export const vision = {
 			headers,
 			timeout: 180_000,
 		});
+	},
+
+	bulkObserve: async (input: BulkObserveInput, options: BulkDetectOptions = {}) => {
+		const formData = new FormData();
+		for (const photo of input.photos) formData.append('images', photo.file);
+		formData.append('session_meta', JSON.stringify({ chunkId: input.chunkId, photoIds: input.photoIds }));
+		formData.append('transcript_spans', JSON.stringify(input.transcriptSpans));
+		formData.append('edited_transcript', input.editedTranscript);
+		const headers = await buildVisionHeaders();
+		return requestFormData<{ chunkId: string; photoIds: string[]; observations: any[]; warnings: string[] }>(
+			'/tools/vision/bulk-observe', formData, { errorMessage: 'Bulk observation failed', signal: options.signal, headers, timeout: 180_000 }
+		);
+	},
+
+	bulkFuse: async (input: { missionId: string; observations: any[]; transcript: string }) => {
+		const headers = await buildVisionHeaders();
+		const result = await request<any[]>('/tools/vision/bulk-fuse', {
+			method: 'POST', body: JSON.stringify(input), headers, timeout: 180_000,
+		});
+		return result.map((candidate) => ({
+			id: candidate.id, name: candidate.name, quantity: candidate.quantity,
+			confidence: 0, status: candidate.state === 'blocked' ? 'needs_review' : candidate.state,
+			evidence: (candidate.evidence_photo_ids ?? []).map((photoId: string) => ({ photoId, reason: 'Observed in photo chunk' })),
+			sourcePhotoIds: candidate.evidence_photo_ids ?? [],
+			uncertaintyReasons: [...(candidate.warning_codes ?? []), ...(candidate.blocker_codes ?? [])],
+			duplicateCandidateIds: [], duplicateExistingItemId: candidate.duplicate_matches?.[0]?.existing_item_id ?? null,
+			suggestedAction: 'review', custom_fields: candidate.custom_fields ?? {},
+			manufacturer: candidate.manufacturer, model_number: candidate.model_number, serial_number: candidate.serial_number,
+			description: candidate.description, tag_ids: candidate.tag_ids ?? [],
+		})) as BulkCandidateItem[];
 	},
 
 	medicineDetect: async (

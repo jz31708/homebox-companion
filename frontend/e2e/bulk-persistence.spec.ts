@@ -132,7 +132,7 @@ test('Bulk Sweep keeps narration usable without browser speech recognition', asy
 test('Bulk Sweep resumes completed observation chunks without resending them', async ({ page }) => {
 	await mockBulkApi(page);
 	let calls = 0;
-	await page.route('**/api/tools/vision/bulk-detect', async (route) => {
+	await page.route('**/api/tools/vision/bulk-observe', async (route) => {
 		calls += 1;
 		if (calls === 2) {
 			await route.fulfill({ status: 502, json: { detail: 'temporary provider failure' } });
@@ -140,12 +140,13 @@ test('Bulk Sweep resumes completed observation chunks without resending them', a
 		}
 		await route.fulfill({
 			json: {
-				candidates: [],
+				chunkId: 'chunk', photoIds: [], observations: [],
 				warnings: [],
 				stats: { photo_count: 8, ignored_photo_count: 0, candidate_count: 0, low_confidence_count: 0 },
 			},
 		});
 	});
+	await page.route('**/api/tools/vision/bulk-fuse', async (route) => route.fulfill({ json: [] }));
 	await page.goto('/location');
 	await page.getByPlaceholder('Search all locations...').fill('Living');
 	await page.getByRole('button', { name: /Living room/i }).click();
@@ -166,11 +167,11 @@ test('Bulk Sweep resumes completed observation chunks without resending them', a
 
 test('Bulk review filters, edits, adds manual candidates, and reloads durably', async ({ page }) => {
 	await mockBulkApi(page);
-	await page.route('**/api/tools/vision/bulk-detect', async (route) => {
-		await route.fulfill({ json: {
-			candidates: [{ id: 'c-router', name: 'Router', quantity: 1, description: 'Network router', tag_ids: [], manufacturer: null, model_number: null, serial_number: null, purchase_price: null, purchase_from: null, notes: null, custom_fields: {}, confidence: 0, status: 'needs_review', evidence: [{ photoId: 'photo-1', reason: 'Observed' }], sourcePhotoIds: ['photo-1'], uncertaintyReasons: ['needs review'], duplicateCandidateIds: [], duplicateExistingItemId: null, suggestedAction: 'review' }],
-			warnings: [], stats: { photo_count: 6, ignored_photo_count: 0, candidate_count: 1, low_confidence_count: 0 },
-		} });
+	await page.route('**/api/tools/vision/bulk-observe', async (route) => {
+		await route.fulfill({ json: { chunkId: 'chunk', photoIds: [], observations: [{ id: 'o-router', name: 'Router', photoIds: ['photo-1'], transcriptSpanIds: [], evidence: [{ photoId: 'photo-1', reason: 'Observed' }] }], warnings: [] } });
+	});
+	await page.route('**/api/tools/vision/bulk-fuse', async (route) => {
+		await route.fulfill({ json: [{ id: 'c-router', name: 'Router', quantity: 1, description: 'Network router', tag_ids: [], manufacturer: null, model_number: null, serial_number: null, custom_fields: {}, state: 'needs_review', evidence_photo_ids: ['photo-1'], warning_codes: ['needs review'], blocker_codes: [], duplicate_matches: [] }] });
 	});
 	await page.goto('/location');
 	await page.getByPlaceholder('Search all locations...').fill('Living');

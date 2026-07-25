@@ -84,6 +84,16 @@ historical implementation files are deliberately separate from that list.
 The deployed runtime after containment and the confirmation that no Phase 1
 fix was performed are recorded in the runtime evidence file.
 
+## Phase 3 evidence
+
+Phase 3 observe/fuse gate passed on 2026-07-25. Bulk analysis now uploads each
+persisted pending or failed chunk to `/bulk-observe`, validates and stores its
+observations, reloads completed observations, and sends the full durable set to
+`/bulk-fuse`. The maintained workflow has zero calls to legacy `/bulk-detect`.
+Failed chunks remain pending/retryable and abort leaves later chunks pending.
+The browser suite passed 7/7, including the completed-chunk retry scenario;
+focused backend contract/observation/fusion/audio tests passed 17/17.
+
 ## Phase 2 evidence
 
 Phase 2 narration-security-and-runtime passed on 2026-07-25. The server
