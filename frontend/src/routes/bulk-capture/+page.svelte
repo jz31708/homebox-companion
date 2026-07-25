@@ -44,9 +44,17 @@
 	}
 
 	async function addCapturedPhoto(event: CustomEvent<Blob>) {
-		await workflow.addPhotos([
-			new File([event.detail], `capture-${Date.now()}.jpg`, { type: 'image/jpeg' }),
-		]);
+		try {
+			await workflow.addPhotos([
+				new File([event.detail], `capture-${Date.now()}.jpg`, { type: 'image/jpeg' }),
+			]);
+		} catch {
+			showToast(
+				'Photo could not be saved. Earlier photos remain safe; retry this capture.',
+				'error'
+			);
+			throw new Error('Photo could not be saved. Retry this capture.');
+		}
 	}
 
 	async function startNarration() {
@@ -138,6 +146,15 @@
 
 	<h2 class="mb-1 text-h2 text-neutral-100">Bulk Sweep</h2>
 	<p class="mb-4 text-body-sm text-neutral-400">{workflow.state.locationPath}</p>
+	<label class="mb-4 block text-body-sm text-neutral-300">
+		Area label (optional)
+		<input
+			class="input mt-2 w-full"
+			value={workflow.state.areaLabel ?? ''}
+			placeholder="left desk drawer or box 3"
+			oninput={(event) => workflow.setAreaLabel((event.currentTarget as HTMLInputElement).value)}
+		/>
+	</label>
 	<BulkCameraCapture
 		oncapture={(blob: Blob) => addCapturedPhoto(new CustomEvent('capture', { detail: blob }))}
 	/>
@@ -272,9 +289,11 @@
 	{/if}
 </div>
 
-	<div class="fixed-bottom-panel p-4">
+<div class="fixed-bottom-panel p-4">
 	{#if workflow.state.status === 'analyzing'}
-		<Button variant="secondary" full onclick={() => workflow.cancelAnalysis()}>Cancel analysis</Button>
+		<Button variant="secondary" full onclick={() => workflow.cancelAnalysis()}
+			>Cancel analysis</Button
+		>
 	{:else if workflow.state.status === 'transcript_review'}
 		<Button variant="primary" full onclick={analyze}>
 			<Sparkles size={18} strokeWidth={1.5} />

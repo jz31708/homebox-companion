@@ -35,7 +35,9 @@ async function mockBulkApi(page: import('@playwright/test').Page) {
 			return;
 		}
 		if (path.startsWith('/items/bulk/')) {
-			await route.fulfill({ json: { status: 'complete', homeboxItemId: 'e2e-item', attachments: [] } });
+			await route.fulfill({
+				json: { status: 'complete', homeboxItemId: 'e2e-item', attachments: [] },
+			});
 			return;
 		}
 		await route.fulfill({ status: 404, json: { detail: `Unhandled ${path}` } });
@@ -116,7 +118,9 @@ test('Bulk Sweep keeps narration usable without browser speech recognition', asy
 		delete (window as any).SpeechRecognition;
 		delete (window as any).webkitSpeechRecognition;
 		Object.defineProperty(navigator, 'mediaDevices', {
-			value: { getUserMedia: async () => Promise.reject(new DOMException('denied', 'NotAllowedError')) },
+			value: {
+				getUserMedia: async () => Promise.reject(new DOMException('denied', 'NotAllowedError')),
+			},
 		});
 	});
 	await page.goto('/location');
@@ -125,7 +129,9 @@ test('Bulk Sweep keeps narration usable without browser speech recognition', asy
 	await page.getByRole('button', { name: /continue to capture/i }).click();
 	await page.getByRole('button', { name: /bulk sweep/i }).click();
 	await page.getByRole('button', { name: /narrate/i }).click();
-	await expect(page.getByText('Microphone unavailable. You can type notes instead.', { exact: true })).toBeVisible();
+	await expect(
+		page.getByText('Microphone unavailable. You can type notes instead.', { exact: true })
+	).toBeVisible();
 	await expect(page.getByText('type notes', { exact: true })).toBeVisible();
 });
 
@@ -140,9 +146,16 @@ test('Bulk Sweep resumes completed observation chunks without resending them', a
 		}
 		await route.fulfill({
 			json: {
-				chunkId: 'chunk', photoIds: [], observations: [],
+				chunkId: 'chunk',
+				photoIds: [],
+				observations: [],
 				warnings: [],
-				stats: { photo_count: 8, ignored_photo_count: 0, candidate_count: 0, low_confidence_count: 0 },
+				stats: {
+					photo_count: 8,
+					ignored_photo_count: 0,
+					candidate_count: 0,
+					low_confidence_count: 0,
+				},
 			},
 		});
 	});
@@ -153,7 +166,11 @@ test('Bulk Sweep resumes completed observation chunks without resending them', a
 	await page.getByRole('button', { name: /continue to capture/i }).click();
 	await page.getByRole('button', { name: /bulk sweep/i }).click();
 	await page.locator('input[type="file"]').setInputFiles(
-		Array.from({ length: 10 }, (_, index) => ({ name: `photo-${index}.jpg`, mimeType: 'image/jpeg', buffer: Buffer.from(`photo-${index}`) }))
+		Array.from({ length: 10 }, (_, index) => ({
+			name: `photo-${index}.jpg`,
+			mimeType: 'image/jpeg',
+			buffer: Buffer.from(`photo-${index}`),
+		}))
 	);
 	await page.getByRole('button', { name: /review transcript/i }).click();
 	await page.getByRole('button', { name: /analyze with this transcript/i }).click();
@@ -165,13 +182,49 @@ test('Bulk Sweep resumes completed observation chunks without resending them', a
 	await expect.poll(() => calls).toBe(3);
 });
 
-test('Bulk review filters, edits, adds manual candidates, and reloads durably', async ({ page }) => {
+test('Bulk review filters, edits, adds manual candidates, and reloads durably', async ({
+	page,
+}) => {
 	await mockBulkApi(page);
 	await page.route('**/api/tools/vision/bulk-observe', async (route) => {
-		await route.fulfill({ json: { chunkId: 'chunk', photoIds: [], observations: [{ id: 'o-router', name: 'Router', photoIds: ['photo-1'], transcriptSpanIds: [], evidence: [{ photoId: 'photo-1', reason: 'Observed' }] }], warnings: [] } });
+		await route.fulfill({
+			json: {
+				chunkId: 'chunk',
+				photoIds: [],
+				observations: [
+					{
+						id: 'o-router',
+						name: 'Router',
+						photoIds: ['photo-1'],
+						transcriptSpanIds: [],
+						evidence: [{ photoId: 'photo-1', reason: 'Observed' }],
+					},
+				],
+				warnings: [],
+			},
+		});
 	});
 	await page.route('**/api/tools/vision/bulk-fuse', async (route) => {
-		await route.fulfill({ json: [{ id: 'c-router', name: 'Router', quantity: 1, description: 'Network router', tag_ids: [], manufacturer: null, model_number: null, serial_number: null, custom_fields: {}, state: 'needs_review', evidence_photo_ids: ['photo-1'], warning_codes: ['needs review'], blocker_codes: [], duplicate_matches: [] }] });
+		await route.fulfill({
+			json: [
+				{
+					id: 'c-router',
+					name: 'Router',
+					quantity: 1,
+					description: 'Network router',
+					tag_ids: [],
+					manufacturer: null,
+					model_number: null,
+					serial_number: null,
+					custom_fields: {},
+					state: 'needs_review',
+					evidence_photo_ids: ['photo-1'],
+					warning_codes: ['needs review'],
+					blocker_codes: [],
+					duplicate_matches: [],
+				},
+			],
+		});
 	});
 	await page.goto('/location');
 	await page.getByPlaceholder('Search all locations...').fill('Living');
@@ -179,7 +232,11 @@ test('Bulk review filters, edits, adds manual candidates, and reloads durably', 
 	await page.getByRole('button', { name: /continue to capture/i }).click();
 	await page.getByRole('button', { name: /bulk sweep/i }).click();
 	await page.locator('input[type="file"]').setInputFiles(
-		Array.from({ length: 6 }, (_, index) => ({ name: `photo-${index + 1}.jpg`, mimeType: 'image/jpeg', buffer: Buffer.from(`photo-${index + 1}`) }))
+		Array.from({ length: 6 }, (_, index) => ({
+			name: `photo-${index + 1}.jpg`,
+			mimeType: 'image/jpeg',
+			buffer: Buffer.from(`photo-${index + 1}`),
+		}))
 	);
 	await page.getByRole('button', { name: /review transcript/i }).click();
 	await page.getByRole('button', { name: /analyze with this transcript/i }).click();
@@ -197,7 +254,10 @@ test('Bulk review filters, edits, adds manual candidates, and reloads durably', 
 		const request = indexedDB.open('hbc-bulk-missions');
 		return await new Promise<string[]>((resolve) => {
 			request.onsuccess = () => {
-				const get = request.result.transaction('candidates', 'readonly').objectStore('candidates').getAll();
+				const get = request.result
+					.transaction('candidates', 'readonly')
+					.objectStore('candidates')
+					.getAll();
 				get.onsuccess = () => resolve(get.result.map((candidate) => candidate.name));
 			};
 		});
@@ -237,9 +297,18 @@ test('Bulk camera starts successfully and keeps a second shutter available', asy
 		Object.defineProperty(navigator, 'mediaDevices', {
 			value: { getUserMedia: async () => stream },
 		});
-		Object.defineProperty(HTMLMediaElement.prototype, 'readyState', { configurable: true, get: () => 4 });
-		Object.defineProperty(HTMLVideoElement.prototype, 'videoWidth', { configurable: true, get: () => 1280 });
-		Object.defineProperty(HTMLVideoElement.prototype, 'videoHeight', { configurable: true, get: () => 720 });
+		Object.defineProperty(HTMLMediaElement.prototype, 'readyState', {
+			configurable: true,
+			get: () => 4,
+		});
+		Object.defineProperty(HTMLVideoElement.prototype, 'videoWidth', {
+			configurable: true,
+			get: () => 1280,
+		});
+		Object.defineProperty(HTMLVideoElement.prototype, 'videoHeight', {
+			configurable: true,
+			get: () => 720,
+		});
 		HTMLMediaElement.prototype.play = async function () {};
 	});
 	await page.goto('/location');
@@ -250,7 +319,11 @@ test('Bulk camera starts successfully and keeps a second shutter available', asy
 	await page.getByRole('button', { name: /start camera/i }).click();
 	await page.locator('video').evaluate((video) => video.dispatchEvent(new Event('loadedmetadata')));
 	await expect(page.getByRole('button', { name: 'Take photo' })).toBeVisible();
-	await expect.poll(() => page.locator('video').evaluate((video) => Boolean((video as HTMLVideoElement).srcObject))).toBe(true);
+	await expect
+		.poll(() =>
+			page.locator('video').evaluate((video) => Boolean((video as HTMLVideoElement).srcObject))
+		)
+		.toBe(true);
 	await page.getByRole('button', { name: 'Take photo' }).click();
 	await page.getByRole('button', { name: 'Take photo' }).click();
 	await expect(page.locator('img[alt^="Bulk sweep capture"]')).toHaveCount(2);

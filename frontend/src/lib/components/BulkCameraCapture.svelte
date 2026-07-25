@@ -4,12 +4,13 @@
 	import Button from '$lib/components/Button.svelte';
 
 	let video = $state<HTMLVideoElement>();
-	let { oncapture = () => {} } = $props<{ oncapture?: (blob: Blob) => void }>();
+	let { oncapture = () => {} } = $props<{ oncapture?: (blob: Blob) => Promise<void> | void }>();
 	let stream: MediaStream | null = null;
 	let error = $state<string | null>(null);
 	let active = $state(false);
 	let starting = $state(false);
 	let torch = $state(false);
+	let persisting = $state(false);
 
 	async function start() {
 		error = null;
@@ -28,8 +29,14 @@
 			video.srcObject = stream;
 			if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
 				await new Promise<void>((resolve, reject) => {
-					const onLoaded = () => { cleanup(); resolve(); };
-					const onError = () => { cleanup(); reject(new Error('Camera metadata unavailable')); };
+					const onLoaded = () => {
+						cleanup();
+						resolve();
+					};
+					const onError = () => {
+						cleanup();
+						reject(new Error('Camera metadata unavailable'));
+					};
 					const cleanup = () => {
 						video?.removeEventListener('loadedmetadata', onLoaded);
 						video?.removeEventListener('error', onError);
@@ -44,7 +51,7 @@
 			stream?.getTracks().forEach((track) => track.stop());
 			stream = null;
 			active = false;
-				error =
+			error =
 				cause instanceof DOMException && cause.name === 'NotAllowedError'
 					? 'Camera permission denied.'
 					: 'Camera unavailable. Use Add Photos below.';
@@ -56,11 +63,12 @@
 	function stop() {
 		stream?.getTracks().forEach((track) => track.stop());
 		stream = null;
-			active = false;
-			torch = false;
+		active = false;
+		torch = false;
 	}
 
 	async function shutter() {
+		if (persisting) return;
 		if (!video?.videoWidth || !video.videoHeight) return;
 		const scale = Math.min(1, 1920 / Math.max(video.videoWidth, video.videoHeight));
 		const canvas = document.createElement('canvas');
@@ -70,7 +78,16 @@
 		const blob = await new Promise<Blob | null>((resolve) =>
 			canvas.toBlob(resolve, 'image/jpeg', 0.82)
 		);
-		if (blob) oncapture(blob);
+		if (blob) {
+			persisting = true;
+			try {
+				await oncapture(blob);
+			} catch (cause) {
+				error = cause instanceof Error ? cause.message : 'Photo could not be saved. Try again.';
+			} finally {
+				persisting = false;
+			}
+		}
 	}
 
 	async function toggleTorch() {
@@ -90,13 +107,20 @@
 </script>
 
 <div class="mb-4 overflow-hidden rounded-xl border border-neutral-700 bg-neutral-950">
-	<video bind:this={video} class:invisible={!active} class="aspect-[3/4] w-full object-cover" playsinline muted></video>
+	<video
+		bind:this={video}
+		class:invisible={!active}
+		class="aspect-[3/4] w-full object-cover"
+		playsinline
+		muted
+	></video>
 	{#if active}
 		<div class="flex items-center justify-center gap-4 p-3">
 			<Button variant="secondary" onclick={toggleTorch}><Zap size={18} /></Button>
 			<button
 				class="h-16 w-16 rounded-full border-4 border-neutral-100 bg-neutral-200"
 				aria-label="Take photo"
+				disabled={persisting}
 				onclick={shutter}
 			></button>
 			<Button variant="secondary" onclick={stop}><CameraOff size={18} /></Button>
@@ -105,7 +129,8 @@
 		<div class="p-4">
 			{#if error}<p class="mb-3 text-body-sm text-warning-300">{error}</p>{/if}
 			<Button variant="primary" full onclick={start} disabled={starting}>
-				<Camera size={18} /> {starting ? 'Starting camera…' : 'Start camera'}
+				<Camera size={18} />
+				{starting ? 'Starting camera…' : 'Start camera'}
 			</Button>
 		</div>
 	{/if}

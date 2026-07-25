@@ -43,6 +43,11 @@ export interface BulkMissionRecord {
 	outboxOperationIds: string[];
 	chunkSize: number;
 	lastError: BulkStructuredError | null;
+	rawTranscript?: string;
+	canonicalTranscript?: string;
+	editedTranscript?: string;
+	transcriptEdited?: boolean;
+	transcriptSource?: 'none' | 'live' | 'manual' | 'mixed' | 'server';
 }
 
 export interface BulkPhotoRecord {
@@ -172,6 +177,15 @@ export interface BulkOutboxOperationRecord {
 	payloadSnapshot?: Record<string, unknown>;
 	expectedAttachmentManifest?: string[];
 	attachmentResults?: Record<string, 'pending' | 'complete' | 'failed'>;
-	stepState?: 'reserved' | 'creating_item' | 'item_created' | 'applying_extended' | 'attaching' | 'partial' | 'complete' | 'failed' | 'recovered';
+	stepState?:
+		| 'reserved'
+		| 'creating_item'
+		| 'item_created'
+		| 'applying_extended'
+		| 'attaching'
+		| 'partial'
+		| 'complete'
+		| 'failed'
+		| 'recovered';
 	attemptCount?: number;
 }

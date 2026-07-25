@@ -24,37 +24,37 @@ phases:
     prompt: codex/01_BRANCH_TRUTH_AND_CONTAINMENT.md
   - id: 1
     name: camera-context-and-lossless-persistence
-    status: complete
+    status: in_progress
     prompt: codex/02_CAMERA_CONTEXT_PERSISTENCE.md
     evidence: frontend/src/lib/components/BulkCameraCapture.svelte, frontend/src/lib/services/bulkMissionDb.ts, frontend/src/lib/workflows/bulkSweep.svelte.ts, frontend/e2e/bulk-persistence.spec.ts
   - id: 2
     name: narration-security-and-runtime
-    status: complete
+    status: changes_requested
     prompt: codex/03_NARRATION_SECURITY_RUNTIME.md
     evidence: server/api/tools/audio.py, src/homebox_companion/core/config.py, frontend/src/lib/api/vision.ts, frontend/src/lib/workflows/bulkSweep.svelte.ts, tests/test_audio_transcription.py
   - id: 3
     name: observation-and-fusion-production-path
-    status: complete
+    status: changes_requested
     prompt: codex/04_OBSERVE_FUSE_PIPELINE.md
     evidence: frontend/src/lib/api/vision.ts, frontend/src/lib/workflows/bulkSweep.svelte.ts, frontend/e2e/bulk-persistence.spec.ts, tests/test_bulk_fusion.py, tests/test_bulk_observation.py
   - id: 4
     name: review-and-candidate-fidelity
-    status: complete
+    status: changes_requested
     prompt: codex/05_REVIEW_CANDIDATE_FIDELITY.md
     evidence: frontend/src/lib/workflows/bulkSweep.svelte.ts, frontend/src/routes/bulk-review/+page.svelte, frontend/e2e/bulk-persistence.spec.ts
   - id: 5
     name: submission-idempotency-and-recovery
-    status: complete
+    status: changes_requested
     prompt: codex/06_SUBMISSION_IDEMPOTENCY.md
     evidence: src/homebox_companion/tools/vision/bulk_submission.py, server/api/items.py, frontend/src/lib/workflows/bulkSweep.svelte.ts, tests/test_bulk_submission.py
   - id: 6
     name: automated-validation-and-independent-audit
-    status: complete
+    status: changes_requested
     prompt: codex/07_VALIDATION_AUDIT.md
     evidence: tests, frontend/e2e/bulk-persistence.spec.ts, docs/plans/active/apartment-ingestion-audit-remediation.md
   - id: 7
     name: redeploy-and-disposable-reacceptance
-    status: complete
+    status: changes_requested
     prompt: codex/08_REDEPLOY_REACCEPT.md
     evidence: runtime-redeploy-2026-07-25.md, ../docs/plans/active/apartment-ingestion-audit-remediation.md
   - id: 8

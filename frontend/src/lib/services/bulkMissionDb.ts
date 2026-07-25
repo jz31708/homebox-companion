@@ -41,12 +41,32 @@ function getDb(): Promise<IDBPDatabase> {
 					if (!db.objectStoreNames.contains(store)) db.createObjectStore(store);
 				}
 				if (oldVersion < 2) {
-					// v1 records are structurally compatible. Keep every store and mark
-					// the migration without rewriting or discarding local evidence.
-					transaction.objectStore('meta').put(
-						{ schemaVersion: 2, migratedAtMs: Date.now() },
-						'schema'
-					);
+					for (const storeName of STORES) {
+						const store = transaction.objectStore(storeName);
+						void (async () => {
+							let cursor = await store.openCursor();
+							while (cursor) {
+								const value = cursor.value as Record<string, unknown>;
+								if (value.schemaVersion !== 2) {
+									value.schemaVersion = 2;
+									if (storeName === 'missions') {
+										value.createdAtMs ??= value.startedAtMs ?? Date.now();
+										value.updatedAtMs ??= value.startedAtMs ?? value.createdAtMs;
+										value.areaLabel ??= null;
+									}
+									if (storeName === 'candidates') {
+										value.correctionHistory ??= [];
+										value.payloadSnapshot ??= null;
+									}
+									await cursor.update(value);
+								}
+								cursor = await cursor.continue();
+							}
+						})();
+					}
+					transaction
+						.objectStore('meta')
+						.put({ schemaVersion: 2, migratedAtMs: Date.now() }, 'schema');
 				}
 			},
 		});
@@ -94,7 +114,7 @@ export async function addOrUpdatePhoto(photo: BulkPhotoRecord): Promise<void> {
 export async function removePhoto(missionId: string, photoId: string): Promise<void> {
 	return serializedWrite(async () => {
 		const db = await getDb();
-		const tx = db.transaction(['photos', 'chunks', 'candidates'], 'readwrite');
+		const tx = db.transaction(['missions', 'photos', 'chunks', 'candidates', 'meta'], 'readwrite');
 		await tx.objectStore('photos').delete(key(missionId, photoId));
 		const chunks = (await tx.objectStore('chunks').getAll()) as BulkObservationChunkRecord[];
 		for (const chunk of chunks) {
@@ -110,6 +130,14 @@ export async function removePhoto(missionId: string, photoId: string): Promise<v
 				await tx.objectStore('candidates').delete(key(missionId, candidate.id));
 			}
 		}
+		const mission = (await tx.objectStore('missions').get(missionId)) as
+			BulkMissionRecord | undefined;
+		if (mission) {
+			mission.photoIds = mission.photoIds.filter((id) => id !== photoId);
+			mission.updatedAtMs = Date.now();
+			await tx.objectStore('missions').put(mission, missionId);
+		}
+		await tx.objectStore('meta').delete(`candidate-snapshot:${missionId}`);
 		await tx.done;
 	});
 }
@@ -130,12 +158,25 @@ export async function saveCandidates(
 	missionId: string,
 	candidates: BulkCandidateRecord[]
 ): Promise<void> {
+	await replaceCandidates(missionId, candidates);
+}
+
+export async function replaceCandidates(
+	missionId: string,
+	candidates: BulkCandidateRecord[]
+): Promise<void> {
 	await serializedWrite(async () => {
 		const db = await getDb();
-		const tx = db.transaction('candidates', 'readwrite');
-		for (const candidate of candidates) {
-			await tx.store.put(candidate, key(missionId, candidate.id));
+		const tx = db.transaction(['candidates', 'meta'], 'readwrite');
+		const keys = await tx.objectStore('candidates').getAllKeys();
+		for (const current of keys) {
+			if (String(current).startsWith(`${missionId}:`))
+				await tx.objectStore('candidates').delete(current);
 		}
+		for (const candidate of candidates) {
+			await tx.objectStore('candidates').put(candidate, key(missionId, candidate.id));
+		}
+		await tx.objectStore('meta').delete(`candidate-snapshot:${missionId}`);
 		await tx.done;
 	});
 }
@@ -144,13 +185,18 @@ export async function saveCandidate(candidate: BulkCandidateRecord): Promise<voi
 	await put('candidates', candidate, candidate.id, candidate.missionId);
 }
 
-export async function saveCandidateSnapshot(missionId: string, candidates: BulkCandidateRecord[]): Promise<void> {
-	await put('meta', { missionId, candidates }, `candidate-snapshot:${missionId}`);
+export async function saveCandidateSnapshot(
+	missionId: string,
+	candidates: BulkCandidateRecord[]
+): Promise<void> {
+	void missionId;
+	void candidates;
 }
 
 export async function loadCandidateSnapshot(missionId: string): Promise<BulkCandidateRecord[]> {
 	const db = await getDb();
-	const value = (await db.get('meta', `candidate-snapshot:${missionId}`)) as { candidates?: BulkCandidateRecord[] } | undefined;
+	const value = (await db.get('meta', `candidate-snapshot:${missionId}`)) as
+		{ candidates?: BulkCandidateRecord[] } | undefined;
 	return value?.candidates ?? [];
 }
 
@@ -220,7 +266,11 @@ export async function discardMission(missionId: string): Promise<void> {
 		for (const store of STORES) {
 			const keys = await tx.objectStore(store).getAllKeys();
 			for (const current of keys)
-				if (String(current).startsWith(`${missionId}:`) || current === missionId || (store === 'meta' && String(current).includes(missionId)))
+				if (
+					String(current).startsWith(`${missionId}:`) ||
+					current === missionId ||
+					(store === 'meta' && String(current).includes(missionId))
+				)
 					await tx.objectStore(store).delete(current);
 		}
 		await tx.done;
