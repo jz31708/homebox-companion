@@ -224,6 +224,7 @@ class BulkSweepWorkflow {
 			text: span.text,
 			startMs: span.startOffsetMs ?? undefined,
 			endMs: span.endOffsetMs ?? undefined,
+			sourceAudioSegmentId: span.sourceAudioSegmentId ?? undefined,
 		}));
 		const durableCandidates = bundle.candidates;
 		this._candidates = durableCandidates.map((candidate) => ({
@@ -339,12 +340,8 @@ class BulkSweepWorkflow {
 					createdAtMs: this._createdAtMs ?? now,
 					startedAtMs: this._startedAtMs ?? now,
 					updatedAtMs: now,
-					photoIds: [],
-					audioSegmentIds: [],
-					transcriptSpanIds: [],
-					observationChunkIds: [],
-					candidateIds: [],
-					outboxOperationIds: [],
+					photoIds: [], audioSegmentIds: [], transcriptSpanIds: [], observationChunkIds: [],
+					candidateIds: [], outboxOperationIds: [],
 					chunkSize: 6,
 					lastError: null,
 				},
@@ -360,14 +357,14 @@ class BulkSweepWorkflow {
 		this._nextCaptureSequence += records.length;
 	}
 
-	updatePhoto(
+	async updatePhoto(
 		id: string,
 		patch: Partial<Pick<BulkCapturedPhoto, 'note' | 'groupLabel' | 'ignored'>>
-	): void {
+	): Promise<void> {
 		this._photos = this._photos.map((photo) => (photo.id === id ? { ...photo, ...patch } : photo));
 		const photo = this._photos.find((entry) => entry.id === id);
 		if (photo)
-			void bulkMissionDb.addOrUpdatePhoto({
+			await bulkMissionDb.addOrUpdatePhoto({
 				schemaVersion: 2,
 				missionId: this.missionId,
 				id: photo.id,
@@ -381,8 +378,13 @@ class BulkSweepWorkflow {
 				note: photo.note,
 				groupLabel: photo.groupLabel,
 				ignored: photo.ignored,
-				captureSequence: this._photos.indexOf(photo),
+				captureSequence: await this.captureSequenceFor(photo.id),
 			});
+	}
+
+	private async captureSequenceFor(id: string): Promise<number> {
+		const bundle = await bulkMissionDb.loadMissionBundle(this.missionId);
+		return bundle?.photos.find((photo) => photo.id === id)?.captureSequence ?? 0;
 	}
 
 	async removePhoto(id: string): Promise<void> {
@@ -766,7 +768,6 @@ class BulkSweepWorkflow {
 			};
 			const clone = JSON.parse(JSON.stringify(record)) as BulkCandidateRecord;
 			records.push(clone);
-			await bulkMissionDb.saveCandidate(clone);
 		}
 		await bulkMissionDb.replaceCandidates(this.missionId, records);
 	}
@@ -1080,6 +1081,7 @@ class BulkSweepWorkflow {
 				status: this._status,
 				locationId: this._locationId,
 				parentItemId: this._parentItemId,
+				parentItemName: this._parentItemName,
 				locationName: this._locationName ?? '',
 				areaLabel: this._areaLabel ?? '',
 				locationPath: this._locationPath ?? this._locationName ?? '',

@@ -27,6 +27,7 @@ type StoreName = (typeof STORES)[number];
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
 let writeQueue = Promise.resolve();
+let migrationPromise: Promise<void> | null = null;
 
 function requireBrowser(): void {
 	if (!browser) throw new Error('Bulk mission storage is only available in the browser');
@@ -35,43 +36,47 @@ function requireBrowser(): void {
 function getDb(): Promise<IDBPDatabase> {
 	requireBrowser();
 	if (!dbPromise) {
-		dbPromise = openDB(DB_NAME, DB_VERSION, {
+			dbPromise = openDB(DB_NAME, DB_VERSION, {
 			upgrade(db, oldVersion, _newVersion, transaction) {
 				for (const store of STORES) {
 					if (!db.objectStoreNames.contains(store)) db.createObjectStore(store);
 				}
-				if (oldVersion < 2) {
-					for (const storeName of STORES) {
-						const store = transaction.objectStore(storeName);
-						void (async () => {
-							let cursor = await store.openCursor();
-							while (cursor) {
-								const value = cursor.value as Record<string, unknown>;
-								if (value.schemaVersion !== 2) {
-									value.schemaVersion = 2;
-									if (storeName === 'missions') {
-										value.createdAtMs ??= value.startedAtMs ?? Date.now();
-										value.updatedAtMs ??= value.startedAtMs ?? value.createdAtMs;
-										value.areaLabel ??= null;
-									}
-									if (storeName === 'candidates') {
-										value.correctionHistory ??= [];
-										value.payloadSnapshot ??= null;
-									}
-									await cursor.update(value);
-								}
-								cursor = await cursor.continue();
-							}
-						})();
-					}
-					transaction
-						.objectStore('meta')
-						.put({ schemaVersion: 2, migratedAtMs: Date.now() }, 'schema');
-				}
+				void oldVersion;
+				void transaction;
 			},
 		});
 	}
-	return dbPromise;
+	if (!migrationPromise) migrationPromise = dbPromise.then((db) => migrateV1Records(db));
+	return dbPromise.then(async (db) => { await migrationPromise; return db; });
+}
+
+async function migrateV1Records(db: IDBPDatabase): Promise<void> {
+	const marker = (await db.get('meta', 'schema')) as { recordsMigrated?: boolean } | undefined;
+	if (marker?.recordsMigrated) return;
+	const tx = db.transaction([...STORES], 'readwrite');
+	for (const storeName of STORES) {
+		const store = tx.objectStore(storeName);
+		const values = (await store.getAll()) as Record<string, unknown>[];
+		for (const value of values) {
+			if (value.schemaVersion === 2) continue;
+			if (storeName === 'missions') {
+				value.createdAtMs ??= value.startedAtMs ?? Date.now();
+				value.updatedAtMs ??= value.startedAtMs ?? value.createdAtMs;
+				value.areaLabel ??= '';
+				value.parentItemName ??= null;
+				value.nextCaptureSequence ??= 0;
+			}
+			if (storeName === 'candidates') {
+				value.correctionHistory ??= [];
+				value.payloadSnapshot ??= null;
+			}
+			value.schemaVersion = 2;
+			const id = (value.id as string | undefined) ?? '';
+			await store.put(value, storeName === 'missions' ? id : `${value.missionId ?? ''}:${id}`);
+		}
+	}
+	await tx.objectStore('meta').put({ schemaVersion: 2, recordsMigrated: true, migratedAtMs: Date.now() }, 'schema');
+	await tx.done;
 }
 
 function key(missionId: string, id: string): string {
@@ -121,18 +126,15 @@ export async function appendPhotosAndUpdateMission(
 		const current = (await tx.objectStore('missions').get(mission.id)) as
 			BulkMissionRecord | undefined;
 		if (!current) throw new Error('Bulk mission is not durable');
-		const next = Math.max(
-			current.nextCaptureSequence ?? 0,
-			...photos.map((photo) => photo.captureSequence + 1)
-		);
-		for (const photo of photos)
+		const next = current.nextCaptureSequence ?? 0;
+		const committedPhotos = photos.map((photo, index) => ({ ...photo, captureSequence: next + index }));
+		for (const photo of committedPhotos)
 			await tx.objectStore('photos').put(photo, key(mission.id, photo.id));
 		const updated: BulkMissionRecord = {
 			...current,
-			...mission,
-			photoIds: [...current.photoIds, ...photos.map((photo) => photo.id)],
+			photoIds: [...current.photoIds, ...committedPhotos.map((photo) => photo.id)],
 			updatedAtMs: Date.now(),
-			nextCaptureSequence: next,
+			nextCaptureSequence: next + committedPhotos.length,
 		};
 		await tx.objectStore('missions').put(updated, mission.id);
 		await tx.done;
@@ -163,6 +165,14 @@ export async function removePhoto(missionId: string, photoId: string): Promise<v
 			BulkMissionRecord | undefined;
 		if (mission) {
 			mission.photoIds = mission.photoIds.filter((id) => id !== photoId);
+			const removedCandidateIds = candidates
+				.filter((candidate) => candidate.missionId === missionId && candidate.evidencePhotoIds.includes(photoId))
+				.map((candidate) => candidate.id);
+			mission.candidateIds = mission.candidateIds.filter((id) => !removedCandidateIds.includes(id));
+			const invalidatedChunkIds = chunks
+				.filter((chunk) => chunk.missionId === missionId && chunk.photoIds.includes(photoId))
+				.map((chunk) => chunk.id);
+			mission.observationChunkIds = mission.observationChunkIds.filter((id) => !invalidatedChunkIds.includes(id));
 			mission.updatedAtMs = Date.now();
 			await tx.objectStore('missions').put(mission, missionId);
 		}

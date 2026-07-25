@@ -62,3 +62,14 @@ the failed batch URLs and leave prior evidence intact. Frontend validation
 passed with 0 svelte-check errors, 0 ESLint errors, a successful production
 build, and the existing Bulk E2E file passed 7/7. Phase 1 remains in progress
 pending senior review of the explicit failure/migration round-trip matrix.
+
+## Phase 1 correction 3 evidence
+
+Photo append now allocates capture sequences from the durable mission inside
+the transaction and preserves all existing mission lists. Photo edits preserve
+their stored sequence, removal updates dependent mission lists atomically,
+camera empty outputs are retryable errors, and v1 migration runs as a durable
+post-open transaction guarded by migration metadata. Frontend checks, lint,
+production build, and the 9-test one-worker E2E suite passed. Candidate
+conversion completeness and the expanded failure-injection matrix remain
+open for senior review; Phase 1 remains in progress.

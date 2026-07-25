@@ -78,15 +78,17 @@
 		const blob = await new Promise<Blob | null>((resolve) =>
 			canvas.toBlob(resolve, 'image/jpeg', 0.82)
 		);
-		if (blob) {
-			persisting = true;
-			try {
-				await oncapture(blob);
-			} catch (cause) {
-				error = cause instanceof Error ? cause.message : 'Photo could not be saved. Try again.';
-			} finally {
-				persisting = false;
-			}
+		if (!blob || blob.size === 0) {
+			error = 'The camera returned an empty photo. Please try again.';
+			return;
+		}
+		persisting = true;
+		try {
+			await oncapture(blob);
+		} catch (cause) {
+			error = cause instanceof Error ? cause.message : 'Photo could not be saved. Try again.';
+		} finally {
+			persisting = false;
 		}
 	}
 

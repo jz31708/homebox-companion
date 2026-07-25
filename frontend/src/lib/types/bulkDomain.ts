@@ -30,6 +30,7 @@ export interface BulkMissionRecord {
 	locationId: string;
 	locationName?: string;
 	parentItemId: string | null;
+	parentItemName?: string | null;
 	areaLabel: string;
 	locationPath?: string;
 	createdAtMs: number;
