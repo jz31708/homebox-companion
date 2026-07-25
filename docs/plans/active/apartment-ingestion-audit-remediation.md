@@ -48,6 +48,19 @@ remain synchronized with it.
 
 ## Remaining gates
 
+Phase 1 camera-context and lossless-persistence gate passed on 2026-07-25.
+The camera now keeps a mounted video element through permission/startup,
+waits for metadata before playback, and preserves the fallback path. Mission
+schema v2 migration preserves existing stores and records migration metadata.
+Location name, location path, explicit area label, parent item, mission
+timestamps, transcript fields, candidate fidelity fields, evidence, and
+outbox attachment state are persisted. Removing a photo invalidates dependent
+chunks and candidates; discard removes mission-scoped metadata. The durable
+E2E suite passed 7/7, including reload recovery, camera denial fallback,
+narration fallback, completed-chunk resume, review reload, 30-photo durability,
+and two-shutter camera capture. `svelte-check` reported 0 errors, ESLint
+reported 0 errors, and the production build completed successfully.
+
 Phase 0 still requires the pushed correction and independent review/draft PR
 gate.
 Later phases must correct the audited camera, narration, observe/fuse,

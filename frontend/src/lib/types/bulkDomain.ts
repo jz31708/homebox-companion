@@ -24,13 +24,17 @@ export interface BulkStructuredError {
 }
 
 export interface BulkMissionRecord {
-	schemaVersion: 1;
+	schemaVersion: 2;
 	id: string;
 	status: string;
 	locationId: string;
+	locationName?: string;
 	parentItemId: string | null;
 	areaLabel: string;
 	locationPath?: string;
+	createdAtMs: number;
+	startedAtMs: number;
+	updatedAtMs: number;
 	photoIds: string[];
 	audioSegmentIds: string[];
 	transcriptSpanIds: string[];
@@ -42,7 +46,7 @@ export interface BulkMissionRecord {
 }
 
 export interface BulkPhotoRecord {
-	schemaVersion: 1;
+	schemaVersion: 2;
 	missionId: string;
 	id: string;
 	status: 'persisting' | 'ready' | 'ignored' | 'observing' | 'observed' | 'failed';
@@ -61,7 +65,9 @@ export interface BulkPhotoRecord {
 }
 
 export interface BulkAudioRecord {
-	schemaVersion: 1;
+	schemaVersion: 2;
+	transcript?: string;
+	source?: 'server' | 'live_preview' | 'manual';
 	missionId: string;
 	id: string;
 	status: 'recording' | 'persisted' | 'transcribing' | 'done' | 'failed' | 'ignored';
@@ -76,7 +82,7 @@ export interface BulkAudioRecord {
 }
 
 export interface BulkTranscriptSpanRecord {
-	schemaVersion: 1;
+	schemaVersion: 2;
 	missionId: string;
 	id: string;
 	sourceAudioSegmentId: string | null;
@@ -95,7 +101,7 @@ export interface BulkEvidenceRefRecord {
 }
 
 export interface BulkObservationRecord {
-	schemaVersion: 1;
+	schemaVersion: 2;
 	missionId: string;
 	id: string;
 	photoIds: string[];
@@ -105,7 +111,7 @@ export interface BulkObservationRecord {
 }
 
 export interface BulkObservationChunkRecord {
-	schemaVersion: 1;
+	schemaVersion: 2;
 	missionId: string;
 	id: string;
 	status: 'pending' | 'uploading' | 'analyzing' | 'complete' | 'failed' | 'cancelled';
@@ -123,7 +129,7 @@ export interface BulkDuplicateMatchRecord {
 }
 
 export interface BulkCandidateRecord {
-	schemaVersion: 1;
+	schemaVersion: 2;
 	missionId: string;
 	id: string;
 	state: BulkCandidateState;
@@ -139,10 +145,22 @@ export interface BulkCandidateRecord {
 	warningCodes: string[];
 	duplicateMatches: BulkDuplicateMatchRecord[];
 	createdHomeboxItemId: string | null;
+	description?: string | null;
+	tagIds?: string[];
+	manufacturer?: string | null;
+	modelNumber?: string | null;
+	serialNumber?: string | null;
+	purchasePrice?: number | null;
+	purchaseFrom?: string | null;
+	notes?: string | null;
+	customFields?: Record<string, string>;
+	suggestedAction?: string;
+	correctionHistory?: Array<{ atMs: number; fields: string[] }>;
+	payloadSnapshot?: Record<string, unknown> | null;
 }
 
 export interface BulkOutboxOperationRecord {
-	schemaVersion: 1;
+	schemaVersion: 2;
 	missionId: string;
 	id: string;
 	candidateId: string;
@@ -151,4 +169,9 @@ export interface BulkOutboxOperationRecord {
 	evidencePhotoIds: string[];
 	homeboxItemId: string | null;
 	lastError: BulkStructuredError | null;
+	payloadSnapshot?: Record<string, unknown>;
+	expectedAttachmentManifest?: string[];
+	attachmentResults?: Record<string, 'pending' | 'complete' | 'failed'>;
+	stepState?: 'reserved' | 'creating_item' | 'item_created' | 'applying_extended' | 'attaching' | 'partial' | 'complete' | 'failed' | 'recovered';
+	attemptCount?: number;
 }

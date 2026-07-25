@@ -225,3 +225,32 @@ test('Bulk Sweep keeps a 30-photo mission responsive and durable', async ({ page
 	await page.reload();
 	await expect(page.getByText('Photos (30)')).toBeVisible();
 });
+
+test('Bulk camera starts successfully and keeps a second shutter available', async ({ page }) => {
+	await mockBulkApi(page);
+	await page.addInitScript(() => {
+		const track = { stop() {}, applyConstraints: async () => {} };
+		const stream = new MediaStream();
+		Object.defineProperty(stream, 'getTracks', { value: () => [track] });
+		Object.defineProperty(stream, 'getVideoTracks', { value: () => [track] });
+		Object.defineProperty(navigator, 'mediaDevices', {
+			value: { getUserMedia: async () => stream },
+		});
+		Object.defineProperty(HTMLMediaElement.prototype, 'readyState', { configurable: true, get: () => 4 });
+		Object.defineProperty(HTMLVideoElement.prototype, 'videoWidth', { configurable: true, get: () => 1280 });
+		Object.defineProperty(HTMLVideoElement.prototype, 'videoHeight', { configurable: true, get: () => 720 });
+		HTMLMediaElement.prototype.play = async function () {};
+	});
+	await page.goto('/location');
+	await page.getByPlaceholder('Search all locations...').fill('Living');
+	await page.getByRole('button', { name: /Living room/i }).click();
+	await page.getByRole('button', { name: /continue to capture/i }).click();
+	await page.getByRole('button', { name: /bulk sweep/i }).click();
+	await page.getByRole('button', { name: /start camera/i }).click();
+	await page.locator('video').evaluate((video) => video.dispatchEvent(new Event('loadedmetadata')));
+	await expect(page.getByRole('button', { name: 'Take photo' })).toBeVisible();
+	await expect.poll(() => page.locator('video').evaluate((video) => Boolean((video as HTMLVideoElement).srcObject))).toBe(true);
+	await page.getByRole('button', { name: 'Take photo' }).click();
+	await page.getByRole('button', { name: 'Take photo' }).click();
+	await expect(page.locator('img[alt^="Bulk sweep capture"]')).toHaveCount(2);
+});

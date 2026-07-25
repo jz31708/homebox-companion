@@ -31,9 +31,11 @@ class BulkSweepWorkflow {
 	private _locationId = $state<string | null>(null);
 	private _locationName = $state<string | null>(null);
 	private _locationPath = $state<string | null>(null);
+	private _areaLabel = $state<string | null>(null);
 	private _parentItemId = $state<string | null>(null);
 	private _parentItemName = $state<string | null>(null);
 	private _startedAtMs = $state<number | null>(null);
+	private _createdAtMs = $state<number | null>(null);
 	private _photos = $state<BulkCapturedPhoto[]>([]);
 	private _audioSegments = $state<BulkAudioSegment[]>([]);
 	private _transcriptSpans = $state<BulkTranscriptSpan[]>([]);
@@ -68,6 +70,8 @@ class BulkSweepWorkflow {
 							return workflow._locationName;
 						case 'locationPath':
 							return workflow._locationPath;
+						case 'areaLabel':
+							return workflow._areaLabel;
 						case 'parentItemId':
 							return workflow._parentItemId;
 						case 'parentItemName':
@@ -119,6 +123,8 @@ class BulkSweepWorkflow {
 		this._locationName = locationName;
 		this._locationPath = locationPath;
 		this._startedAtMs = Date.now();
+		this._createdAtMs = this._startedAtMs;
+		this._areaLabel = locationPath;
 		void this.persistMission();
 	}
 
@@ -137,10 +143,12 @@ class BulkSweepWorkflow {
 		this.missionId = mission.id;
 		this._status = mission.status === 'complete' ? 'idle' : (mission.status as BulkSweepStatus);
 		this._locationId = mission.locationId;
-		this._locationName = mission.areaLabel;
+		this._locationName = mission.locationName ?? mission.areaLabel;
 		this._locationPath = mission.locationPath ?? mission.areaLabel;
+		this._areaLabel = mission.areaLabel;
 		this._parentItemId = mission.parentItemId;
-		this._startedAtMs = Date.now();
+		this._startedAtMs = mission.startedAtMs ?? mission.updatedAtMs;
+		this._createdAtMs = mission.createdAtMs ?? mission.startedAtMs ?? mission.updatedAtMs;
 		this._photos = bundle.photos.map((photo) => ({
 			id: photo.id,
 			file: new File([photo.blob], photo.filename, { type: photo.mimeType }),
@@ -172,23 +180,23 @@ class BulkSweepWorkflow {
 			id: candidate.id,
 			name: candidate.name,
 			quantity: candidate.quantity,
-			description: null,
-			tag_ids: [],
-			manufacturer: null,
-			model_number: null,
-			serial_number: null,
-			purchase_price: null,
-			purchase_from: null,
-			notes: null,
-			custom_fields: {},
+			description: candidate.description ?? null,
+			tag_ids: candidate.tagIds ?? [],
+			manufacturer: candidate.manufacturer ?? null,
+			model_number: candidate.modelNumber ?? null,
+			serial_number: candidate.serialNumber ?? null,
+			purchase_price: candidate.purchasePrice ?? null,
+			purchase_from: candidate.purchaseFrom ?? null,
+			notes: candidate.notes ?? null,
+			custom_fields: candidate.customFields ?? {},
 			confidence: 0,
-			status: candidate.state === 'accepted' ? 'accepted' : candidate.state === 'rejected' ? 'rejected' : 'needs_review',
+			status: candidate.state === 'submitted' ? 'accepted' : candidate.state === 'accepted' ? 'accepted' : candidate.state === 'rejected' ? 'rejected' : 'needs_review',
 			evidence: candidate.evidencePhotoIds.map((photoId) => ({ photoId, reason: 'Persisted candidate evidence' })),
 			sourcePhotoIds: candidate.evidencePhotoIds,
 			uncertaintyReasons: candidate.warningCodes,
 			duplicateCandidateIds: [],
 			duplicateExistingItemId: candidate.duplicateMatches[0]?.existingItemId ?? null,
-			suggestedAction: 'review',
+			suggestedAction: (candidate.suggestedAction as BulkCandidateItem['suggestedAction']) ?? 'review',
 			originalFiles: candidate.evidencePhotoIds.map((photoId) => this._photos.find((photo) => photo.id === photoId)?.file).filter((file): file is File => Boolean(file)),
 		}));
 		this._status = this._status === 'analyzing' ? 'transcript_review' : this._status;
@@ -238,7 +246,7 @@ class BulkSweepWorkflow {
 		this._photos = [...this._photos, ...added];
 		const writes = added.map((photo) =>
 			bulkMissionDb.addOrUpdatePhoto({
-				schemaVersion: 1,
+				schemaVersion: 2,
 				missionId: this.missionId,
 				id: photo.id,
 				status: 'ready',
@@ -266,7 +274,7 @@ class BulkSweepWorkflow {
 		const photo = this._photos.find((entry) => entry.id === id);
 		if (photo)
 			void bulkMissionDb.addOrUpdatePhoto({
-				schemaVersion: 1,
+				schemaVersion: 2,
 				missionId: this.missionId,
 				id: photo.id,
 				status: photo.ignored ? 'ignored' : 'ready',
@@ -306,7 +314,7 @@ class BulkSweepWorkflow {
 		const segment = this._audioSegments.at(-1);
 		if (segment)
 			void bulkMissionDb.addOrUpdateAudio({
-				schemaVersion: 1,
+				schemaVersion: 2,
 				missionId: this.missionId,
 				id: segment.id,
 				status: 'persisted',
@@ -370,14 +378,14 @@ class BulkSweepWorkflow {
 			const warnings: string[] = [];
 			for (const plan of plans) {
 				if (completed.has(plan.id)) continue;
-				await bulkMissionDb.saveChunk({ schemaVersion: 1, missionId: this.missionId, id: plan.id, status: 'analyzing', photoIds: plan.photoIds, transcriptSpanIds: plan.transcriptSpanIds, requestHash: plan.requestHash, observations: [], error: null });
+				await bulkMissionDb.saveChunk({ schemaVersion: 2, missionId: this.missionId, id: plan.id, status: 'analyzing', photoIds: plan.photoIds, transcriptSpanIds: plan.transcriptSpanIds, requestHash: plan.requestHash, observations: [], error: null });
 				try {
 					const result = await vision.bulkDetect({ photos: activePhotos.filter((photo) => plan.photoIds.includes(photo.id)), allPhotos: this._photos, locationId: this._locationId, locationName: this._locationName, locationPath: this._locationPath, parentItemId: this._parentItemId, editedTranscript: this._editedTranscriptText, transcriptSpans: this._transcriptSpans, photoIds: plan.photoIds }, { signal: this.abortController.signal });
 					candidates.push(...result.candidates);
 					warnings.push(...result.warnings);
-					await bulkMissionDb.saveChunk({ schemaVersion: 1, missionId: this.missionId, id: plan.id, status: 'complete', photoIds: plan.photoIds, transcriptSpanIds: plan.transcriptSpanIds, requestHash: plan.requestHash, observations: result.candidates.map((candidate) => ({ schemaVersion: 1, missionId: this.missionId, id: `${plan.id}:${candidate.id}`, photoIds: candidate.sourcePhotoIds, transcriptSpanIds: candidate.evidence.map((evidence) => evidence.transcriptSpanId).filter((id): id is string => Boolean(id)), name: candidate.name, evidence: candidate.evidence })), error: null });
+					await bulkMissionDb.saveChunk({ schemaVersion: 2, missionId: this.missionId, id: plan.id, status: 'complete', photoIds: plan.photoIds, transcriptSpanIds: plan.transcriptSpanIds, requestHash: plan.requestHash, observations: result.candidates.map((candidate) => ({ schemaVersion: 2, missionId: this.missionId, id: `${plan.id}:${candidate.id}`, photoIds: candidate.sourcePhotoIds, transcriptSpanIds: candidate.evidence.map((evidence) => evidence.transcriptSpanId).filter((id): id is string => Boolean(id)), name: candidate.name, evidence: candidate.evidence })), error: null });
 				} catch (error) {
-					await bulkMissionDb.saveChunk({ schemaVersion: 1, missionId: this.missionId, id: plan.id, status: 'failed', photoIds: plan.photoIds, transcriptSpanIds: plan.transcriptSpanIds, requestHash: plan.requestHash, observations: [], error: { code: 'OBSERVATION_CHUNK_FAILED', message: error instanceof Error ? error.message : 'Observation failed', retryable: true } });
+					await bulkMissionDb.saveChunk({ schemaVersion: 2, missionId: this.missionId, id: plan.id, status: 'failed', photoIds: plan.photoIds, transcriptSpanIds: plan.transcriptSpanIds, requestHash: plan.requestHash, observations: [], error: { code: 'OBSERVATION_CHUNK_FAILED', message: error instanceof Error ? error.message : 'Observation failed', retryable: true } });
 					warnings.push(`Chunk ${plan.id} failed; retry it independently.`);
 				}
 				this._analysisProgress = { current: Math.min(activePhotos.length, this._analysisProgress.current + plan.photoIds.length), total: activePhotos.length, message: `Analyzed ${Math.min(activePhotos.length, this._analysisProgress.current + plan.photoIds.length)} of ${activePhotos.length} photos` };
@@ -389,7 +397,7 @@ class BulkSweepWorkflow {
 			await bulkMissionDb.saveCandidates(
 				this.missionId,
 				candidates.map((candidate): BulkCandidateRecord => ({
-					schemaVersion: 1,
+					schemaVersion: 2,
 					missionId: this.missionId,
 					id: candidate.id,
 					state: candidate.status === 'accepted' ? 'accepted' : 'needs_review',
@@ -405,6 +413,18 @@ class BulkSweepWorkflow {
 					warningCodes: candidate.quantity > 1 ? ['quantity_unconfirmed'] : [],
 					duplicateMatches: [],
 					createdHomeboxItemId: null,
+					description: candidate.description,
+					tagIds: candidate.tag_ids ?? [],
+					manufacturer: candidate.manufacturer,
+					modelNumber: candidate.model_number,
+					serialNumber: candidate.serial_number,
+					purchasePrice: candidate.purchase_price,
+					purchaseFrom: candidate.purchase_from,
+					notes: candidate.notes,
+					customFields: candidate.custom_fields ?? {},
+					suggestedAction: candidate.suggestedAction,
+					correctionHistory: [],
+					payloadSnapshot: null,
 				}))
 			);
 			await this.persistMission();
@@ -452,7 +472,7 @@ class BulkSweepWorkflow {
 		const records: BulkCandidateRecord[] = [];
 		for (const candidate of this._candidates) {
 			const record: BulkCandidateRecord = {
-				schemaVersion: 1,
+				schemaVersion: 2,
 				missionId: this.missionId,
 				id: candidate.id,
 				state: candidate.status === 'accepted' ? 'accepted' : candidate.status === 'rejected' ? 'rejected' : 'needs_review',
@@ -467,6 +487,18 @@ class BulkSweepWorkflow {
 				blockerCodes: [], warningCodes: candidate.uncertaintyReasons,
 				duplicateMatches: candidate.duplicateExistingItemId ? [{ existingItemId: candidate.duplicateExistingItemId, matchKind: 'advisory', reasons: ['Review required'] }] : [],
 				createdHomeboxItemId: null,
+				description: candidate.description,
+				tagIds: candidate.tag_ids ?? [],
+				manufacturer: candidate.manufacturer,
+				modelNumber: candidate.model_number,
+				serialNumber: candidate.serial_number,
+				purchasePrice: candidate.purchase_price,
+				purchaseFrom: candidate.purchase_from,
+				notes: candidate.notes,
+				customFields: candidate.custom_fields ?? {},
+				suggestedAction: candidate.suggestedAction,
+				correctionHistory: [],
+				payloadSnapshot: null,
 			};
 			const clone = JSON.parse(JSON.stringify(record)) as BulkCandidateRecord;
 			records.push(clone);
@@ -570,11 +602,11 @@ class BulkSweepWorkflow {
 					existing_item_action: candidate.suggestedAction === 'merge' ? 'increase_quantity' : null,
 				};
 				const requestHash = JSON.stringify(payload);
-				await bulkMissionDb.saveOutbox({ schemaVersion: 1, missionId: this.missionId, id: `${this.missionId}:${candidate.id}`, candidateId: candidate.id, requestHash, status: 'sending', evidencePhotoIds: candidate.sourcePhotoIds, homeboxItemId: null, lastError: null });
+				await bulkMissionDb.saveOutbox({ schemaVersion: 2, missionId: this.missionId, id: `${this.missionId}:${candidate.id}`, candidateId: candidate.id, requestHash, status: 'sending', evidencePhotoIds: candidate.sourcePhotoIds, homeboxItemId: null, lastError: null, payloadSnapshot: payload, expectedAttachmentManifest: candidate.sourcePhotoIds, attachmentResults: Object.fromEntries(candidate.sourcePhotoIds.map((id) => [id, 'pending'])), stepState: 'reserved', attemptCount: 1 });
 				const attachments = candidate.sourcePhotoIds.map((photoId) => ({ photoId, file: this._photos.find((photo) => photo.id === photoId)?.file })).filter((entry): entry is { photoId: string; file: File } => Boolean(entry.file));
 				const response = await items.submitBulkCandidate(this.missionId, candidate.id, payload, attachments, requestHash, { signal: this.abortController?.signal });
 				candidate.status = response.status === 'complete' ? 'accepted' : 'needs_review';
-				await bulkMissionDb.saveOutbox({ schemaVersion: 1, missionId: this.missionId, id: `${this.missionId}:${candidate.id}`, candidateId: candidate.id, requestHash, status: response.status === 'complete' ? 'complete' : 'partial', evidencePhotoIds: candidate.sourcePhotoIds, homeboxItemId: response.homeboxItemId ?? null, lastError: response.status === 'complete' ? null : { code: 'ATTACHMENTS_PARTIAL', message: 'Some attachments need retry', retryable: true } });
+				await bulkMissionDb.saveOutbox({ schemaVersion: 2, missionId: this.missionId, id: `${this.missionId}:${candidate.id}`, candidateId: candidate.id, requestHash, status: response.status === 'complete' ? 'complete' : 'partial', evidencePhotoIds: candidate.sourcePhotoIds, homeboxItemId: response.homeboxItemId ?? null, lastError: response.status === 'complete' ? null : { code: 'ATTACHMENTS_PARTIAL', message: 'Some attachments need retry', retryable: true }, payloadSnapshot: payload, expectedAttachmentManifest: candidate.sourcePhotoIds, attachmentResults: Object.fromEntries(candidate.sourcePhotoIds.map((id) => [id, response.attachments?.find((attachment) => attachment.photoId === id)?.status === 'complete' ? 'complete' : 'failed'])), stepState: response.status === 'complete' ? 'complete' : 'partial', attemptCount: 1 });
 				this._submissionProgress = {
 					current: i + 1,
 					total: accepted.length,
@@ -601,9 +633,11 @@ class BulkSweepWorkflow {
 		this._locationId = null;
 		this._locationName = null;
 		this._locationPath = null;
+		this._areaLabel = null;
 		this._parentItemId = null;
 		this._parentItemName = null;
 		this._startedAtMs = null;
+		this._createdAtMs = null;
 		this._photos = [];
 		this._audioSegments = [];
 		this._transcriptSpans = [];
@@ -624,13 +658,17 @@ class BulkSweepWorkflow {
 		if (!this._locationId) return;
 		try {
 			await bulkMissionDb.saveMission({
-				schemaVersion: 1,
+				schemaVersion: 2,
 				id: this.missionId,
 				status: this._status,
 				locationId: this._locationId,
 				parentItemId: this._parentItemId,
-				areaLabel: this._locationName ?? '',
+				locationName: this._locationName ?? '',
+				areaLabel: this._areaLabel ?? '',
 				locationPath: this._locationPath ?? this._locationName ?? '',
+				createdAtMs: this._createdAtMs ?? Date.now(),
+				startedAtMs: this._startedAtMs ?? Date.now(),
+				updatedAtMs: Date.now(),
 				photoIds: this._photos.map((photo) => photo.id),
 				audioSegmentIds: this._audioSegments.map((audio) => audio.id),
 				transcriptSpanIds: this._transcriptSpans.map((span) => span.id),

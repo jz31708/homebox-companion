@@ -23,8 +23,9 @@ phases:
     evidence: docs/plans/active/apartment-ingestion-audit-remediation.md, audit-remediation/runtime-containment-2026-07-15.md
   - id: 1
     name: camera-context-and-lossless-persistence
-    status: pending
+    status: complete
     prompt: audit-remediation/codex/02_CAMERA_CONTEXT_PERSISTENCE.md
+    evidence: frontend/src/lib/components/BulkCameraCapture.svelte, frontend/src/lib/services/bulkMissionDb.ts, frontend/src/lib/workflows/bulkSweep.svelte.ts, frontend/e2e/bulk-persistence.spec.ts
   - id: 2
     name: narration-security-and-runtime
     status: pending

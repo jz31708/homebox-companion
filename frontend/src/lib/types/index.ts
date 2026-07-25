@@ -303,6 +303,7 @@ export interface BulkSweepState {
 	locationId: string | null;
 	locationName: string | null;
 	locationPath: string | null;
+	areaLabel: string | null;
 	parentItemId: string | null;
 	parentItemName: string | null;
 	startedAtMs: number | null;

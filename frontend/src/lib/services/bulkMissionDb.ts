@@ -11,7 +11,7 @@ import type {
 } from '$lib/types/bulkDomain';
 
 const DB_NAME = 'hbc-bulk-missions';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const MISSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const STORES = [
 	'missions',
@@ -36,9 +36,17 @@ function getDb(): Promise<IDBPDatabase> {
 	requireBrowser();
 	if (!dbPromise) {
 		dbPromise = openDB(DB_NAME, DB_VERSION, {
-			upgrade(db) {
+			upgrade(db, oldVersion, _newVersion, transaction) {
 				for (const store of STORES) {
 					if (!db.objectStoreNames.contains(store)) db.createObjectStore(store);
+				}
+				if (oldVersion < 2) {
+					// v1 records are structurally compatible. Keep every store and mark
+					// the migration without rewriting or discarding local evidence.
+					transaction.objectStore('meta').put(
+						{ schemaVersion: 2, migratedAtMs: Date.now() },
+						'schema'
+					);
 				}
 			},
 		});
@@ -84,7 +92,26 @@ export async function addOrUpdatePhoto(photo: BulkPhotoRecord): Promise<void> {
 }
 
 export async function removePhoto(missionId: string, photoId: string): Promise<void> {
-	return serializedWrite(async () => (await getDb()).delete('photos', key(missionId, photoId)));
+	return serializedWrite(async () => {
+		const db = await getDb();
+		const tx = db.transaction(['photos', 'chunks', 'candidates'], 'readwrite');
+		await tx.objectStore('photos').delete(key(missionId, photoId));
+		const chunks = (await tx.objectStore('chunks').getAll()) as BulkObservationChunkRecord[];
+		for (const chunk of chunks) {
+			if (chunk.missionId === missionId && chunk.photoIds.includes(photoId)) {
+				chunk.status = 'pending';
+				chunk.observations = [];
+				await tx.objectStore('chunks').put(chunk, key(missionId, chunk.id));
+			}
+		}
+		const candidates = (await tx.objectStore('candidates').getAll()) as BulkCandidateRecord[];
+		for (const candidate of candidates) {
+			if (candidate.missionId === missionId && candidate.evidencePhotoIds.includes(photoId)) {
+				await tx.objectStore('candidates').delete(key(missionId, candidate.id));
+			}
+		}
+		await tx.done;
+	});
 }
 
 export async function addOrUpdateAudio(audio: BulkAudioRecord): Promise<void> {
@@ -191,10 +218,9 @@ export async function discardMission(missionId: string): Promise<void> {
 		const db = await getDb();
 		const tx = db.transaction([...STORES], 'readwrite');
 		for (const store of STORES) {
-			if (store === 'meta') continue;
 			const keys = await tx.objectStore(store).getAllKeys();
 			for (const current of keys)
-				if (String(current).startsWith(`${missionId}:`) || current === missionId)
+				if (String(current).startsWith(`${missionId}:`) || current === missionId || (store === 'meta' && String(current).includes(missionId)))
 					await tx.objectStore(store).delete(current);
 		}
 		await tx.done;
