@@ -135,6 +135,14 @@ export interface BulkDuplicateMatchRecord {
 	reasons: string[];
 }
 
+export type BulkDuplicateResolutionAction = 'keep_new' | 'use_existing' | 'review';
+
+export interface BulkDuplicateResolutionRecord {
+	action: BulkDuplicateResolutionAction;
+	existingItemId?: string | null;
+	atMs?: number;
+}
+
 export interface BulkCandidateRecord {
 	schemaVersion: 2;
 	missionId: string;
@@ -143,24 +151,28 @@ export interface BulkCandidateRecord {
 	reviewTier: BulkReviewTier;
 	name: string;
 	quantity: number;
+	confidence?: number;
 	entityMode: BulkEntityMode;
 	quantityBasis: BulkQuantityBasis;
 	sourceObservationIds: string[];
 	evidencePhotoIds: string[];
 	evidenceTranscriptSpanIds: string[];
+	evidence?: BulkEvidenceRefRecord[];
 	blockerCodes: string[];
 	warningCodes: string[];
+	duplicateCandidateIds?: string[];
 	duplicateMatches: BulkDuplicateMatchRecord[];
+	duplicateResolution?: BulkDuplicateResolutionRecord | null;
 	createdHomeboxItemId: string | null;
 	description?: string | null;
-	tagIds?: string[];
+	tagIds?: string[] | null;
 	manufacturer?: string | null;
 	modelNumber?: string | null;
 	serialNumber?: string | null;
 	purchasePrice?: number | null;
 	purchaseFrom?: string | null;
 	notes?: string | null;
-	customFields?: Record<string, string>;
+	customFields?: Record<string, string> | null;
 	suggestedAction?: string;
 	correctionHistory?: Array<{ atMs: number; fields: string[] }>;
 	payloadSnapshot?: Record<string, unknown> | null;

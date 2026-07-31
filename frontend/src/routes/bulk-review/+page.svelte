@@ -129,9 +129,7 @@
 						<p class="text-caption text-neutral-500">
 							Review status: {candidate.status} · Qty {candidate.quantity}
 						</p>
-						<p class="hidden text-caption text-neutral-500">
-							Confidence {Math.round(candidate.confidence * 100)}% · Qty {candidate.quantity}
-						</p>
+						<p class="hidden">Quantity {candidate.quantity}</p>
 					</div>
 					{#if candidate.uncertaintyReasons.length > 0}
 						<AlertTriangle size={18} strokeWidth={1.5} class="shrink-0 text-warning-400" />

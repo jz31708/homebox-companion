@@ -24,6 +24,14 @@ const STORES = [
 	'meta',
 ] as const;
 type StoreName = (typeof STORES)[number];
+type MutableRecord = Record<string, unknown>;
+type MissionListField =
+	| 'photoIds'
+	| 'audioSegmentIds'
+	| 'transcriptSpanIds'
+	| 'observationChunkIds'
+	| 'candidateIds'
+	| 'outboxOperationIds';
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
 let writeQueue = Promise.resolve();
@@ -36,7 +44,7 @@ function requireBrowser(): void {
 function getDb(): Promise<IDBPDatabase> {
 	requireBrowser();
 	if (!dbPromise) {
-			dbPromise = openDB(DB_NAME, DB_VERSION, {
+		dbPromise = openDB(DB_NAME, DB_VERSION, {
 			upgrade(db, oldVersion, _newVersion, transaction) {
 				for (const store of STORES) {
 					if (!db.objectStoreNames.contains(store)) db.createObjectStore(store);
@@ -47,36 +55,318 @@ function getDb(): Promise<IDBPDatabase> {
 		});
 	}
 	if (!migrationPromise) migrationPromise = dbPromise.then((db) => migrateV1Records(db));
-	return dbPromise.then(async (db) => { await migrationPromise; return db; });
+	return dbPromise.then(async (db) => {
+		await migrationPromise;
+		return db;
+	});
 }
 
 async function migrateV1Records(db: IDBPDatabase): Promise<void> {
-	const marker = (await db.get('meta', 'schema')) as { recordsMigrated?: boolean } | undefined;
-	if (marker?.recordsMigrated) return;
+	const marker = (await db.get('meta', 'schema')) as
+		{ recordsMigrated?: boolean; migrationVersion?: number } | undefined;
+	if (marker?.recordsMigrated && marker.migrationVersion === DB_VERSION) return;
 	const tx = db.transaction([...STORES], 'readwrite');
+	const migrationNow = Date.now();
+	const missionKeys = new Map<string, IDBValidKey>();
+	const missions = new Map<string, BulkMissionRecord>();
+	const nextSequences = new Map<string, number>();
+	const photosMissingSequence = new Set<IDBValidKey>();
+	const recordIdsByMission = new Map<string, Partial<Record<MissionListField, string[]>>>();
 	for (const storeName of STORES) {
 		const store = tx.objectStore(storeName);
-		const values = (await store.getAll()) as Record<string, unknown>[];
-		for (const value of values) {
-			if (value.schemaVersion === 2) continue;
+		let cursor = await store.openCursor();
+		while (cursor) {
+			if (
+				storeName === 'meta' &&
+				(!cursor.value || typeof cursor.value !== 'object' || Array.isArray(cursor.value))
+			) {
+				cursor = await cursor.continue();
+				continue;
+			}
+			if (
+				storeName === 'photos' &&
+				(() => {
+					const sequence =
+						cursor.value && typeof cursor.value === 'object'
+							? (cursor.value as { captureSequence?: unknown }).captureSequence
+							: undefined;
+					return typeof sequence !== 'number' || sequence < 0;
+				})()
+			) {
+				photosMissingSequence.add(cursor.primaryKey);
+			}
+			const value = normalizeRecord(storeName, cursor.value, cursor.primaryKey, migrationNow);
 			if (storeName === 'missions') {
-				value.createdAtMs ??= value.startedAtMs ?? Date.now();
-				value.updatedAtMs ??= value.startedAtMs ?? value.createdAtMs;
-				value.areaLabel ??= '';
-				value.parentItemName ??= null;
-				value.nextCaptureSequence ??= 0;
+				const mission = value as unknown as BulkMissionRecord;
+				missionKeys.set(mission.id, cursor.primaryKey);
+				missions.set(mission.id, mission);
+				nextSequences.set(mission.id, mission.nextCaptureSequence ?? 0);
+			} else {
+				const record = value as MutableRecord;
+				const missionId = typeof record.missionId === 'string' ? record.missionId : '';
+				const id = typeof record.id === 'string' ? record.id : '';
+				const field = missionListFieldForStore(storeName);
+				if (missionId && id && field) {
+					const lists = recordIdsByMission.get(missionId) ?? {};
+					lists[field] = [...(lists[field] ?? []), id];
+					recordIdsByMission.set(missionId, lists);
+				}
 			}
-			if (storeName === 'candidates') {
-				value.correctionHistory ??= [];
-				value.payloadSnapshot ??= null;
-			}
-			value.schemaVersion = 2;
-			const id = (value.id as string | undefined) ?? '';
-			await store.put(value, storeName === 'missions' ? id : `${value.missionId ?? ''}:${id}`);
+			await cursor.update(value);
+			cursor = await cursor.continue();
 		}
 	}
-	await tx.objectStore('meta').put({ schemaVersion: 2, recordsMigrated: true, migratedAtMs: Date.now() }, 'schema');
+	const photoStore = tx.objectStore('photos');
+	let photoCursor = await photoStore.openCursor();
+	while (photoCursor) {
+		const photo = photoCursor.value as BulkPhotoRecord;
+		if (photo.missionId) {
+			const current = nextSequences.get(photo.missionId) ?? 0;
+			const sequence = photosMissingSequence.has(photoCursor.primaryKey)
+				? current
+				: photo.captureSequence;
+			photo.captureSequence = sequence;
+			nextSequences.set(photo.missionId, Math.max(current, sequence + 1));
+			await photoCursor.update(
+				normalizeRecord('photos', photo, photoCursor.primaryKey, migrationNow)
+			);
+		}
+		photoCursor = await photoCursor.continue();
+	}
+	for (const [missionId, mission] of missions) {
+		const recordIds = recordIdsByMission.get(missionId);
+		for (const field of [
+			'photoIds',
+			'audioSegmentIds',
+			'transcriptSpanIds',
+			'observationChunkIds',
+			'candidateIds',
+			'outboxOperationIds',
+		] as MissionListField[]) {
+			const actualIds = recordIds?.[field] ?? [];
+			const actualSet = new Set(actualIds);
+			mission[field] = uniqueIds([
+				...(mission[field] ?? []).filter((id) => actualSet.has(id)),
+				...actualIds,
+			]) as never;
+		}
+		const nextCaptureSequence = nextSequences.get(missionId) ?? 0;
+		mission.nextCaptureSequence = nextCaptureSequence;
+		await tx.objectStore('missions').put(mission, missionKeys.get(missionId) ?? mission.id);
+	}
+	await tx.objectStore('meta').put(
+		{
+			schemaVersion: DB_VERSION,
+			recordsMigrated: true,
+			migrationVersion: DB_VERSION,
+			migratedAtMs: migrationNow,
+		},
+		'schema'
+	);
 	await tx.done;
+}
+
+function missionListFieldForStore(storeName: StoreName): MissionListField | null {
+	switch (storeName) {
+		case 'photos':
+			return 'photoIds';
+		case 'audio':
+			return 'audioSegmentIds';
+		case 'spans':
+			return 'transcriptSpanIds';
+		case 'chunks':
+			return 'observationChunkIds';
+		case 'candidates':
+			return 'candidateIds';
+		case 'outbox':
+			return 'outboxOperationIds';
+		default:
+			return null;
+	}
+}
+
+function stringValue(value: unknown, fallback: string): string {
+	return typeof value === 'string' ? value : fallback;
+}
+
+function numberValue(value: unknown, fallback: number): number {
+	return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function arrayValue(value: unknown): string[] {
+	return Array.isArray(value)
+		? value.filter((entry): entry is string => typeof entry === 'string')
+		: [];
+}
+
+function missionIdFromKey(primaryKey: IDBValidKey): string {
+	return typeof primaryKey === 'string' ? primaryKey.split(':')[0] : '';
+}
+
+function recordIdFromKey(primaryKey: IDBValidKey): string {
+	return typeof primaryKey === 'string'
+		? primaryKey.split(':').slice(1).join(':')
+		: String(primaryKey);
+}
+
+function normalizeRecord(
+	storeName: StoreName,
+	input: unknown,
+	primaryKey: IDBValidKey,
+	now: number
+): MutableRecord {
+	const record: MutableRecord =
+		input && typeof input === 'object' && !Array.isArray(input)
+			? { ...(input as MutableRecord) }
+			: {};
+	record.schemaVersion = DB_VERSION;
+	const keyMissionId = missionIdFromKey(primaryKey);
+	const keyId = recordIdFromKey(primaryKey);
+
+	switch (storeName) {
+		case 'missions': {
+			record.id = stringValue(record.id, String(primaryKey));
+			record.status = stringValue(record.status, 'capturing');
+			record.locationId = stringValue(record.locationId, '');
+			record.parentItemId = typeof record.parentItemId === 'string' ? record.parentItemId : null;
+			record.parentItemName =
+				typeof record.parentItemName === 'string' ? record.parentItemName : null;
+			record.areaLabel = stringValue(record.areaLabel, '');
+			record.createdAtMs = numberValue(record.createdAtMs, numberValue(record.startedAtMs, now));
+			record.startedAtMs = numberValue(record.startedAtMs, record.createdAtMs as number);
+			record.updatedAtMs = numberValue(record.updatedAtMs, record.createdAtMs as number);
+			record.photoIds = arrayValue(record.photoIds);
+			record.audioSegmentIds = arrayValue(record.audioSegmentIds);
+			record.transcriptSpanIds = arrayValue(record.transcriptSpanIds);
+			record.observationChunkIds = arrayValue(record.observationChunkIds);
+			record.candidateIds = arrayValue(record.candidateIds);
+			record.outboxOperationIds = arrayValue(record.outboxOperationIds);
+			record.chunkSize = numberValue(record.chunkSize, 6);
+			record.lastError ??= null;
+			record.parentItemName ??= null;
+			record.transcriptEdited ??= false;
+			record.transcriptSource ??= 'none';
+			record.nextCaptureSequence = Math.max(0, numberValue(record.nextCaptureSequence, 0));
+			break;
+		}
+		case 'photos': {
+			record.missionId = stringValue(record.missionId, keyMissionId);
+			record.id = stringValue(record.id, keyId);
+			record.status = stringValue(record.status, 'ready');
+			record.filename = stringValue(record.filename, `${record.id}.jpg`);
+			record.mimeType = stringValue(
+				record.mimeType,
+				record.blob instanceof Blob ? record.blob.type : 'image/jpeg'
+			);
+			record.byteSize = numberValue(
+				record.byteSize,
+				record.blob instanceof Blob ? record.blob.size : 0
+			);
+			record.takenAtMs = numberValue(record.takenAtMs, now);
+			record.sessionOffsetMs = numberValue(record.sessionOffsetMs, 0);
+			record.note = stringValue(record.note, '');
+			record.groupLabel = stringValue(record.groupLabel, '');
+			record.ignored ??= false;
+			record.captureSequence = Math.max(0, numberValue(record.captureSequence, 0));
+			break;
+		}
+		case 'audio': {
+			record.missionId = stringValue(record.missionId, keyMissionId);
+			record.id = stringValue(record.id, keyId);
+			record.status = stringValue(record.status, 'persisted');
+			record.mimeType = stringValue(
+				record.mimeType,
+				record.blob instanceof Blob ? record.blob.type : 'audio/webm'
+			);
+			record.byteSize = numberValue(
+				record.byteSize,
+				record.blob instanceof Blob ? record.blob.size : 0
+			);
+			record.startedAtMs = numberValue(record.startedAtMs, now);
+			record.endedAtMs = numberValue(record.endedAtMs, record.startedAtMs as number);
+			record.rawTranscript = stringValue(record.rawTranscript, stringValue(record.transcript, ''));
+			record.error ??= null;
+			record.retryCount = Math.max(0, numberValue(record.retryCount, 0));
+			record.source ??= 'server';
+			break;
+		}
+		case 'spans': {
+			record.missionId = stringValue(record.missionId, keyMissionId);
+			record.id = stringValue(record.id, keyId);
+			record.sourceAudioSegmentId =
+				typeof record.sourceAudioSegmentId === 'string' ? record.sourceAudioSegmentId : null;
+			record.text = stringValue(record.text, '');
+			record.startOffsetMs = typeof record.startOffsetMs === 'number' ? record.startOffsetMs : null;
+			record.endOffsetMs = typeof record.endOffsetMs === 'number' ? record.endOffsetMs : null;
+			record.source ??= 'manual';
+			record.canonical ??= false;
+			break;
+		}
+		case 'chunks': {
+			record.missionId = stringValue(record.missionId, keyMissionId);
+			record.id = stringValue(record.id, keyId);
+			record.status = stringValue(record.status, 'pending');
+			record.photoIds = arrayValue(record.photoIds);
+			record.transcriptSpanIds = arrayValue(record.transcriptSpanIds);
+			record.requestHash = stringValue(record.requestHash, '');
+			record.observations = Array.isArray(record.observations)
+				? record.observations.map((entry, index) => {
+						const observation =
+							entry && typeof entry === 'object' ? { ...(entry as MutableRecord) } : {};
+						observation.schemaVersion = DB_VERSION;
+						observation.missionId = record.missionId;
+						observation.id = stringValue(observation.id, `${record.id}:observation-${index}`);
+						observation.photoIds = arrayValue(observation.photoIds);
+						observation.transcriptSpanIds = arrayValue(observation.transcriptSpanIds);
+						observation.name = stringValue(observation.name, 'Unnamed observation');
+						observation.evidence = Array.isArray(observation.evidence) ? observation.evidence : [];
+						return observation;
+					})
+				: [];
+			record.error ??= null;
+			break;
+		}
+		case 'candidates': {
+			record.missionId = stringValue(record.missionId, keyMissionId);
+			record.id = stringValue(record.id, keyId);
+			record.state = stringValue(record.state, 'needs_review');
+			record.reviewTier = stringValue(record.reviewTier, 'attention');
+			record.name = stringValue(record.name, 'Unnamed item');
+			record.quantity = Math.max(0, numberValue(record.quantity, 1));
+			record.entityMode = stringValue(record.entityMode, 'individual');
+			record.quantityBasis = stringValue(record.quantityBasis, 'unknown');
+			record.sourceObservationIds = arrayValue(record.sourceObservationIds);
+			record.evidencePhotoIds = arrayValue(record.evidencePhotoIds);
+			record.evidenceTranscriptSpanIds = arrayValue(record.evidenceTranscriptSpanIds);
+			record.duplicateCandidateIds = arrayValue(record.duplicateCandidateIds);
+			record.blockerCodes = arrayValue(record.blockerCodes);
+			record.warningCodes = arrayValue(record.warningCodes);
+			record.duplicateMatches = Array.isArray(record.duplicateMatches)
+				? record.duplicateMatches
+				: [];
+			record.createdHomeboxItemId =
+				typeof record.createdHomeboxItemId === 'string' ? record.createdHomeboxItemId : null;
+			record.correctionHistory = Array.isArray(record.correctionHistory)
+				? record.correctionHistory
+				: [];
+			record.payloadSnapshot ??= null;
+			break;
+		}
+		case 'outbox': {
+			record.missionId = stringValue(record.missionId, keyMissionId);
+			record.id = stringValue(record.id, keyId);
+			record.candidateId = stringValue(record.candidateId, '');
+			record.requestHash = stringValue(record.requestHash, '');
+			record.status = stringValue(record.status, 'pending');
+			record.evidencePhotoIds = arrayValue(record.evidencePhotoIds);
+			record.homeboxItemId = typeof record.homeboxItemId === 'string' ? record.homeboxItemId : null;
+			record.lastError ??= null;
+			break;
+		}
+		case 'meta':
+			break;
+	}
+	return record;
 }
 
 function key(missionId: string, id: string): string {
@@ -89,108 +379,394 @@ async function serializedWrite<T>(operation: () => Promise<T>): Promise<T> {
 		() => undefined,
 		() => undefined
 	);
-	return next;
+	return next.catch((error: unknown) => {
+		throw normalizeStorageError(error);
+	});
 }
 
-async function put<T>(store: StoreName, value: T, id: string, missionId?: string): Promise<void> {
-	try {
-		return await serializedWrite(async () => {
-			const db = await getDb();
-			await db.put(store, value, missionId ? key(missionId, id) : id);
+function normalizeStorageError(error: unknown): Error {
+	if (
+		(typeof DOMException !== 'undefined' &&
+			error instanceof DOMException &&
+			error.name === 'QuotaExceededError') ||
+		(error instanceof Error && error.name === 'QuotaExceededError')
+	) {
+		return new Error('BULK_STORAGE_QUOTA_EXCEEDED: earlier evidence was preserved', {
+			cause: error,
 		});
-	} catch (error) {
-		if (error instanceof DOMException && error.name === 'QuotaExceededError') {
-			throw new Error('BULK_STORAGE_QUOTA_EXCEEDED: earlier evidence was preserved', {
-				cause: error,
-			});
-		}
-		throw error;
 	}
+	return error instanceof Error ? error : new Error(String(error));
+}
+
+function abortTransactionAndThrow(tx: { abort(): void }, error: unknown): never {
+	try {
+		tx.abort();
+	} catch {
+		// The transaction may already be finished or aborted.
+	}
+	throw error;
+}
+
+function uniqueIds(ids: string[]): string[] {
+	return [...new Set(ids)];
+}
+
+function normalizedReferenceFieldName(fieldName: string): string {
+	return fieldName.replace(/[_-]/g, '').toLowerCase();
+}
+
+function isPhotoReferenceArrayField(fieldName: string): boolean {
+	const normalized = normalizedReferenceFieldName(fieldName);
+	return (
+		normalized === 'evidencephotoids' ||
+		normalized === 'photoids' ||
+		normalized === 'expectedattachmentmanifest' ||
+		normalized === 'attachmentmanifest' ||
+		normalized === 'attachmentmanifestids'
+	);
+}
+
+function cloneWithoutPhotoReference(value: unknown, photoId: string, fieldName?: string): unknown {
+	if (Array.isArray(value)) {
+		return value
+			.filter((entry) => {
+				if (!isPhotoReferenceArrayField(fieldName ?? '')) return true;
+				if (entry === photoId) return false;
+				if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+					const item = entry as Record<string, unknown>;
+					return item.photoId !== photoId && item.photo_id !== photoId;
+				}
+				return true;
+			})
+			.map((entry) => cloneWithoutPhotoReference(entry, photoId, fieldName));
+	}
+	if (!value || typeof value !== 'object') return value;
+	if (value instanceof Blob) return value;
+	const copy: Record<string, unknown> = {};
+	for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+		if (isPhotoReferenceArrayField(fieldName ?? '') && key === photoId) continue;
+		copy[key] = cloneWithoutPhotoReference(entry, photoId, key);
+	}
+	return copy;
+}
+
+function sanitizePayloadSnapshot(
+	payloadSnapshot: Record<string, unknown> | undefined,
+	photoId: string
+): Record<string, unknown> | undefined {
+	return payloadSnapshot
+		? (cloneWithoutPhotoReference(payloadSnapshot, photoId) as Record<string, unknown>)
+		: undefined;
+}
+
+function deterministicRequestHash(payloadSnapshot: Record<string, unknown> | undefined): string {
+	return payloadSnapshot ? (JSON.stringify(payloadSnapshot) ?? '') : '';
+}
+
+function hasPhotoReference(value: unknown, photoId: string, fieldName?: string): boolean {
+	if (Array.isArray(value)) {
+		return value.some((entry) => {
+			if (isPhotoReferenceArrayField(fieldName ?? '') && entry === photoId) return true;
+			if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+				const item = entry as Record<string, unknown>;
+				if (isPhotoReferenceArrayField(fieldName ?? ''))
+					return item.photoId === photoId || item.photo_id === photoId;
+			}
+			return hasPhotoReference(entry, photoId, fieldName);
+		});
+	}
+	if (!value || typeof value !== 'object' || value instanceof Blob) return false;
+	if (isPhotoReferenceArrayField(fieldName ?? '')) {
+		if (Object.prototype.hasOwnProperty.call(value, photoId)) return true;
+		const item = value as Record<string, unknown>;
+		if (item.photoId === photoId || item.photo_id === photoId || item.id === photoId) return true;
+	}
+	return Object.entries(value as Record<string, unknown>).some(([key, entry]) =>
+		hasPhotoReference(entry, photoId, key)
+	);
+}
+
+function candidateReferencesPhoto(candidate: BulkCandidateRecord, photoId: string): boolean {
+	if (candidate.evidencePhotoIds.includes(photoId)) return true;
+	return Boolean(
+		candidate.evidence?.some(
+			(reference) =>
+				(reference as { photoId?: string; photo_id?: string }).photoId === photoId ||
+				(reference as { photoId?: string; photo_id?: string }).photo_id === photoId
+		)
+	);
+}
+
+function mergeMissionLists(
+	current: BulkMissionRecord,
+	incoming: BulkMissionRecord
+): BulkMissionRecord {
+	const merged = { ...incoming };
+	for (const field of [
+		'photoIds',
+		'audioSegmentIds',
+		'transcriptSpanIds',
+		'observationChunkIds',
+		'candidateIds',
+		'outboxOperationIds',
+	] as MissionListField[]) {
+		// Existing mission lists are durable indexes, not caller-owned patches. A
+		// stale workflow snapshot must never reintroduce an ID removed by another
+		// atomic operation.
+		merged[field] = [...(current[field] ?? [])] as never;
+	}
+	merged.nextCaptureSequence = Math.max(
+		current.nextCaptureSequence ?? 0,
+		incoming.nextCaptureSequence ?? 0
+	);
+	return merged;
+}
+
+async function saveMissionScopedRecord<T extends { missionId: string; id: string }>(
+	storeName: Exclude<StoreName, 'missions' | 'photos' | 'meta'>,
+	record: T,
+	missionListField: Exclude<MissionListField, 'photoIds'>
+): Promise<void> {
+	await serializedWrite(async () => {
+		const db = await getDb();
+		const tx = db.transaction([storeName, 'missions'], 'readwrite');
+		try {
+			await tx
+				.objectStore(storeName)
+				.put({ ...record, schemaVersion: DB_VERSION }, key(record.missionId, record.id));
+			const mission = (await tx.objectStore('missions').get(record.missionId)) as
+				BulkMissionRecord | undefined;
+			if (mission) {
+				mission[missionListField] = uniqueIds([
+					...(mission[missionListField] ?? []),
+					record.id,
+				]) as never;
+				mission.updatedAtMs = Date.now();
+				await tx.objectStore('missions').put(mission, mission.id);
+			}
+			await tx.done;
+		} catch (error) {
+			abortTransactionAndThrow(tx, error);
+		}
+	});
 }
 
 export async function saveMission(mission: BulkMissionRecord): Promise<void> {
-	await put('missions', { ...mission, updatedAtMs: Date.now() }, mission.id);
+	await serializedWrite(async () => {
+		const db = await getDb();
+		const tx = db.transaction('missions', 'readwrite');
+		const current = (await tx.objectStore('missions').get(mission.id)) as
+			BulkMissionRecord | undefined;
+		const value = current ? mergeMissionLists(current, mission) : { ...mission };
+		value.schemaVersion = DB_VERSION;
+		value.updatedAtMs = Date.now();
+		await tx.objectStore('missions').put(value, mission.id);
+		await tx.done;
+	});
 }
 
 export async function addOrUpdatePhoto(photo: BulkPhotoRecord): Promise<void> {
-	await put('photos', photo, photo.id, photo.missionId);
+	await serializedWrite(async () => {
+		const db = await getDb();
+		const tx = db.transaction(['photos', 'missions'], 'readwrite');
+		try {
+			const photoStore = tx.objectStore('photos');
+			const existing = (await photoStore.get(key(photo.missionId, photo.id))) as
+				BulkPhotoRecord | undefined;
+			const value: BulkPhotoRecord = existing
+				? { ...existing, ...photo, captureSequence: existing.captureSequence }
+				: { ...photo, schemaVersion: DB_VERSION };
+			await photoStore.put(value, key(photo.missionId, photo.id));
+			const mission = (await tx.objectStore('missions').get(photo.missionId)) as
+				BulkMissionRecord | undefined;
+			if (mission) {
+				mission.photoIds = uniqueIds([...(mission.photoIds ?? []), photo.id]);
+				mission.updatedAtMs = Date.now();
+				await tx.objectStore('missions').put(mission, mission.id);
+			}
+			await tx.done;
+		} catch (error) {
+			abortTransactionAndThrow(tx, error);
+		}
+	});
+}
+
+export async function updatePhoto(
+	missionId: string,
+	photoId: string,
+	patch: Partial<BulkPhotoRecord>
+): Promise<BulkPhotoRecord> {
+	return serializedWrite(async () => {
+		const db = await getDb();
+		const tx = db.transaction(['photos', 'missions'], 'readwrite');
+		try {
+			const photoStore = tx.objectStore('photos');
+			const existing = (await photoStore.get(key(missionId, photoId))) as
+				BulkPhotoRecord | undefined;
+			if (!existing) throw new Error('Bulk photo is not durable');
+			const value: BulkPhotoRecord = {
+				...existing,
+				...patch,
+				missionId,
+				id: photoId,
+				captureSequence: existing.captureSequence,
+			};
+			await photoStore.put(value, key(missionId, photoId));
+			const mission = (await tx.objectStore('missions').get(missionId)) as
+				BulkMissionRecord | undefined;
+			if (mission) {
+				mission.updatedAtMs = Date.now();
+				await tx.objectStore('missions').put(mission, mission.id);
+			}
+			await tx.done;
+			return value;
+		} catch (error) {
+			abortTransactionAndThrow(tx, error);
+		}
+	});
 }
 
 export async function appendPhotosAndUpdateMission(
 	mission: BulkMissionRecord,
 	photos: BulkPhotoRecord[]
-): Promise<BulkMissionRecord> {
+): Promise<{ mission: BulkMissionRecord; photos: BulkPhotoRecord[] }> {
 	return serializedWrite(async () => {
 		const db = await getDb();
 		const tx = db.transaction(['missions', 'photos'], 'readwrite');
-		const current = (await tx.objectStore('missions').get(mission.id)) as
-			BulkMissionRecord | undefined;
-		if (!current) throw new Error('Bulk mission is not durable');
-		const next = current.nextCaptureSequence ?? 0;
-		const committedPhotos = photos.map((photo, index) => ({ ...photo, captureSequence: next + index }));
-		for (const photo of committedPhotos)
-			await tx.objectStore('photos').put(photo, key(mission.id, photo.id));
-		const updated: BulkMissionRecord = {
-			...current,
-			photoIds: [...current.photoIds, ...committedPhotos.map((photo) => photo.id)],
-			updatedAtMs: Date.now(),
-			nextCaptureSequence: next + committedPhotos.length,
-		};
-		await tx.objectStore('missions').put(updated, mission.id);
-		await tx.done;
-		return updated;
+		try {
+			const current = (await tx.objectStore('missions').get(mission.id)) as
+				BulkMissionRecord | undefined;
+			if (!current) throw new Error('Bulk mission is not durable');
+			const next = current.nextCaptureSequence ?? 0;
+			const committedPhotos: BulkPhotoRecord[] = photos.map((photo, index) => ({
+				...photo,
+				missionId: current.id,
+				schemaVersion: 2,
+				captureSequence: next + index,
+			}));
+			for (const photo of committedPhotos)
+				await tx.objectStore('photos').put(photo, key(current.id, photo.id));
+			const updated: BulkMissionRecord = {
+				...current,
+				photoIds: uniqueIds([...current.photoIds, ...committedPhotos.map((photo) => photo.id)]),
+				updatedAtMs: Date.now(),
+				nextCaptureSequence: next + committedPhotos.length,
+			};
+			await tx.objectStore('missions').put(updated, current.id);
+			await tx.done;
+			return { mission: updated, photos: committedPhotos };
+		} catch (error) {
+			abortTransactionAndThrow(tx, error);
+		}
 	});
 }
 
 export async function removePhoto(missionId: string, photoId: string): Promise<void> {
 	return serializedWrite(async () => {
 		const db = await getDb();
-		const tx = db.transaction(['missions', 'photos', 'chunks', 'candidates', 'meta'], 'readwrite');
-		await tx.objectStore('photos').delete(key(missionId, photoId));
-		const chunks = (await tx.objectStore('chunks').getAll()) as BulkObservationChunkRecord[];
-		for (const chunk of chunks) {
-			if (chunk.missionId === missionId && chunk.photoIds.includes(photoId)) {
-				chunk.status = 'pending';
-				chunk.observations = [];
-				await tx.objectStore('chunks').put(chunk, key(missionId, chunk.id));
+		const tx = db.transaction(
+			['missions', 'photos', 'chunks', 'candidates', 'outbox', 'meta'],
+			'readwrite'
+		);
+		try {
+			const mission = (await tx.objectStore('missions').get(missionId)) as
+				BulkMissionRecord | undefined;
+			await tx.objectStore('photos').delete(key(missionId, photoId));
+			const chunks = (await tx.objectStore('chunks').getAll()) as BulkObservationChunkRecord[];
+			for (const chunk of chunks) {
+				if (chunk.missionId === missionId && chunk.photoIds.includes(photoId)) {
+					chunk.photoIds = chunk.photoIds.filter((id) => id !== photoId);
+					chunk.status = 'pending';
+					chunk.observations = [];
+					await tx.objectStore('chunks').put(chunk, key(missionId, chunk.id));
+				}
 			}
-		}
-		const candidates = (await tx.objectStore('candidates').getAll()) as BulkCandidateRecord[];
-		for (const candidate of candidates) {
-			if (candidate.missionId === missionId && candidate.evidencePhotoIds.includes(photoId)) {
-				await tx.objectStore('candidates').delete(key(missionId, candidate.id));
-			}
-		}
-		const mission = (await tx.objectStore('missions').get(missionId)) as
-			BulkMissionRecord | undefined;
-		if (mission) {
-			mission.photoIds = mission.photoIds.filter((id) => id !== photoId);
+			const candidates = (await tx.objectStore('candidates').getAll()) as BulkCandidateRecord[];
 			const removedCandidateIds = candidates
-				.filter((candidate) => candidate.missionId === missionId && candidate.evidencePhotoIds.includes(photoId))
+				.filter(
+					(candidate) =>
+						candidate.missionId === missionId && candidateReferencesPhoto(candidate, photoId)
+				)
 				.map((candidate) => candidate.id);
-			mission.candidateIds = mission.candidateIds.filter((id) => !removedCandidateIds.includes(id));
-			const invalidatedChunkIds = chunks
-				.filter((chunk) => chunk.missionId === missionId && chunk.photoIds.includes(photoId))
-				.map((chunk) => chunk.id);
-			mission.observationChunkIds = mission.observationChunkIds.filter((id) => !invalidatedChunkIds.includes(id));
-			mission.updatedAtMs = Date.now();
-			await tx.objectStore('missions').put(mission, missionId);
+			for (const candidate of candidates) {
+				if (removedCandidateIds.includes(candidate.id) && candidate.missionId === missionId) {
+					await tx.objectStore('candidates').delete(key(missionId, candidate.id));
+				}
+			}
+			const outbox = (await tx.objectStore('outbox').getAll()) as BulkOutboxOperationRecord[];
+			const remainingOutboxIds: string[] = [];
+			for (const operation of outbox) {
+				if (operation.missionId !== missionId) continue;
+				if (removedCandidateIds.includes(operation.candidateId)) {
+					await tx.objectStore('outbox').delete(key(missionId, operation.id));
+					continue;
+				}
+				const evidencePhotoIds = operation.evidencePhotoIds.filter((id) => id !== photoId);
+				const expectedAttachmentManifest = operation.expectedAttachmentManifest?.filter(
+					(id) => id !== photoId
+				);
+				const attachmentResults = operation.attachmentResults
+					? { ...operation.attachmentResults }
+					: undefined;
+				if (attachmentResults && Object.prototype.hasOwnProperty.call(attachmentResults, photoId))
+					delete attachmentResults[photoId];
+				const payloadHasPhoto = hasPhotoReference(operation.payloadSnapshot, photoId);
+				const sanitizedPayloadSnapshot = payloadHasPhoto
+					? sanitizePayloadSnapshot(operation.payloadSnapshot, photoId)
+					: operation.payloadSnapshot;
+				const changed =
+					evidencePhotoIds.length !== operation.evidencePhotoIds.length ||
+					expectedAttachmentManifest?.length !== operation.expectedAttachmentManifest?.length ||
+					Boolean(
+						operation.attachmentResults &&
+						attachmentResults &&
+						Object.keys(operation.attachmentResults).length !==
+							Object.keys(attachmentResults).length
+					) ||
+					payloadHasPhoto;
+				if (changed) {
+					operation.evidencePhotoIds = evidencePhotoIds;
+					operation.expectedAttachmentManifest = expectedAttachmentManifest;
+					operation.attachmentResults = attachmentResults;
+					operation.payloadSnapshot = sanitizedPayloadSnapshot;
+					operation.requestHash = deterministicRequestHash(sanitizedPayloadSnapshot);
+					await tx.objectStore('outbox').put(operation, key(missionId, operation.id));
+				}
+				remainingOutboxIds.push(operation.id);
+			}
+			if (mission) {
+				mission.photoIds = mission.photoIds.filter((id) => id !== photoId);
+				mission.observationChunkIds = uniqueIds(
+					chunks.filter((chunk) => chunk.missionId === missionId).map((chunk) => chunk.id)
+				);
+				mission.candidateIds = candidates
+					.filter(
+						(candidate) =>
+							candidate.missionId === missionId && !removedCandidateIds.includes(candidate.id)
+					)
+					.map((candidate) => candidate.id);
+				mission.outboxOperationIds = remainingOutboxIds;
+				mission.updatedAtMs = Date.now();
+				await tx.objectStore('missions').put(mission, missionId);
+			}
+			await tx.objectStore('meta').delete(`candidate-snapshot:${missionId}`);
+			await tx.done;
+		} catch (error) {
+			abortTransactionAndThrow(tx, error);
 		}
-		await tx.objectStore('meta').delete(`candidate-snapshot:${missionId}`);
-		await tx.done;
 	});
 }
 
 export async function addOrUpdateAudio(audio: BulkAudioRecord): Promise<void> {
-	await put('audio', audio, audio.id, audio.missionId);
+	await saveMissionScopedRecord('audio', audio, 'audioSegmentIds');
 }
 
 export async function saveSpan(span: BulkTranscriptSpanRecord): Promise<void> {
-	await put('spans', span, span.id, span.missionId);
+	await saveMissionScopedRecord('spans', span, 'transcriptSpanIds');
 }
 
 export async function saveChunk(chunk: BulkObservationChunkRecord): Promise<void> {
-	await put('chunks', chunk, chunk.id, chunk.missionId);
+	await saveMissionScopedRecord('chunks', chunk, 'observationChunkIds');
 }
 
 export async function saveCandidates(
@@ -207,28 +783,42 @@ export async function replaceCandidates(
 	await serializedWrite(async () => {
 		const db = await getDb();
 		const tx = db.transaction(['missions', 'candidates', 'meta'], 'readwrite');
-		const keys = await tx.objectStore('candidates').getAllKeys();
-		for (const current of keys) {
-			if (String(current).startsWith(`${missionId}:`))
-				await tx.objectStore('candidates').delete(current);
+		try {
+			const keys = await tx.objectStore('candidates').getAllKeys();
+			for (const current of keys) {
+				if (String(current).startsWith(`${missionId}:`))
+					await tx.objectStore('candidates').delete(current);
+			}
+			for (const candidate of candidates) {
+				await tx
+					.objectStore('candidates')
+					.put(
+						{ ...candidate, missionId, schemaVersion: DB_VERSION },
+						key(missionId, candidate.id)
+					);
+			}
+			const mission = (await tx.objectStore('missions').get(missionId)) as
+				BulkMissionRecord | undefined;
+			if (mission) {
+				mission.candidateIds = candidates.map((candidate) => candidate.id);
+				mission.updatedAtMs = Date.now();
+				await tx.objectStore('missions').put(mission, missionId);
+			}
+			await tx.objectStore('meta').delete(`candidate-snapshot:${missionId}`);
+			await tx.done;
+		} catch (error) {
+			try {
+				tx.abort();
+			} catch {
+				// The transaction may already be finished or aborted.
+			}
+			throw error;
 		}
-		for (const candidate of candidates) {
-			await tx.objectStore('candidates').put(candidate, key(missionId, candidate.id));
-		}
-		const mission = (await tx.objectStore('missions').get(missionId)) as
-			BulkMissionRecord | undefined;
-		if (mission) {
-			mission.candidateIds = candidates.map((candidate) => candidate.id);
-			mission.updatedAtMs = Date.now();
-			await tx.objectStore('missions').put(mission, missionId);
-		}
-		await tx.objectStore('meta').delete(`candidate-snapshot:${missionId}`);
-		await tx.done;
 	});
 }
 
 export async function saveCandidate(candidate: BulkCandidateRecord): Promise<void> {
-	await put('candidates', candidate, candidate.id, candidate.missionId);
+	await saveMissionScopedRecord('candidates', candidate, 'candidateIds');
 }
 
 export async function saveCandidateSnapshot(
@@ -247,7 +837,7 @@ export async function loadCandidateSnapshot(missionId: string): Promise<BulkCand
 }
 
 export async function saveOutbox(operation: BulkOutboxOperationRecord): Promise<void> {
-	await put('outbox', operation, operation.id, operation.missionId);
+	await saveMissionScopedRecord('outbox', operation, 'outboxOperationIds');
 }
 
 export async function loadActiveMission(): Promise<BulkMissionRecord | null> {
@@ -309,17 +899,23 @@ export async function discardMission(missionId: string): Promise<void> {
 	await serializedWrite(async () => {
 		const db = await getDb();
 		const tx = db.transaction([...STORES], 'readwrite');
-		for (const store of STORES) {
-			const keys = await tx.objectStore(store).getAllKeys();
-			for (const current of keys)
-				if (
-					String(current).startsWith(`${missionId}:`) ||
-					current === missionId ||
-					(store === 'meta' && String(current).includes(missionId))
-				)
-					await tx.objectStore(store).delete(current);
+		try {
+			for (const store of STORES) {
+				const keys = await tx.objectStore(store).getAllKeys();
+				for (const current of keys)
+					if (
+						String(current).startsWith(`${missionId}:`) ||
+						current === missionId ||
+						(store === 'meta' &&
+							(String(current) === `candidate-snapshot:${missionId}` ||
+								String(current).startsWith(`${missionId}:`)))
+					)
+						await tx.objectStore(store).delete(current);
+			}
+			await tx.done;
+		} catch (error) {
+			abortTransactionAndThrow(tx, error);
 		}
-		await tx.done;
 	});
 }
 
@@ -333,6 +929,22 @@ export async function cleanupStaleMissions(now = Date.now()): Promise<void> {
 
 export async function resetDatabaseForTests(): Promise<void> {
 	if (!browser) return;
+	const pendingQueue = writeQueue;
+	try {
+		await pendingQueue;
+	} catch {
+		// The database is being reset; the failed operation is intentionally discarded.
+	}
+	const pendingDb = dbPromise;
 	dbPromise = null;
+	migrationPromise = null;
+	writeQueue = Promise.resolve();
+	if (pendingDb) {
+		try {
+			(await pendingDb).close();
+		} catch {
+			// The open promise may have failed; deleteDB below still resets the database.
+		}
+	}
 	await deleteDB(DB_NAME);
 }

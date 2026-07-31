@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
+	import { beforeNavigate } from '$app/navigation';
 	import { Camera, CameraOff, Zap } from 'lucide-svelte';
 	import Button from '$lib/components/Button.svelte';
 
@@ -11,13 +12,52 @@
 	let starting = $state(false);
 	let torch = $state(false);
 	let persisting = $state(false);
+	let persistingGeneration: number | null = null;
+	let lifecycleGeneration = 0;
+	let cancelMetadataWait: (() => void) | null = null;
+
+	function stopTracks(candidate: MediaStream | null) {
+		candidate?.getTracks().forEach((track) => track.stop());
+	}
+
+	function waitForMetadata(element: HTMLVideoElement, generation: number): Promise<void> {
+		if (element.readyState >= HTMLMediaElement.HAVE_METADATA) return Promise.resolve();
+		return new Promise<void>((resolve, reject) => {
+			let settled = false;
+			const cleanup = () => {
+				element.removeEventListener('loadedmetadata', onLoaded);
+				element.removeEventListener('error', onError);
+				if (cancelMetadataWait === cancel) cancelMetadataWait = null;
+			};
+			const finish = (callback: () => void) => {
+				if (settled) return;
+				settled = true;
+				cleanup();
+				callback();
+			};
+			const onLoaded = () => finish(resolve);
+			const onError = () => finish(() => reject(new Error('Camera metadata unavailable')));
+			const cancel = () => finish(() => reject(new Error('Camera startup canceled')));
+
+			cancelMetadataWait = cancel;
+			element.addEventListener('loadedmetadata', onLoaded, { once: true });
+			element.addEventListener('error', onError, { once: true });
+			if (generation !== lifecycleGeneration) cancel();
+		});
+	}
 
 	async function start() {
+		const generation = ++lifecycleGeneration;
 		error = null;
 		starting = true;
+		cancelMetadataWait?.();
+		cancelMetadataWait = null;
+		if (video) video.srcObject = null;
+		stopTracks(stream);
+		stream = null;
+		active = false;
 		try {
-			stream?.getTracks().forEach((track) => track.stop());
-			stream = await navigator.mediaDevices.getUserMedia({
+			const acquiredStream = await navigator.mediaDevices.getUserMedia({
 				video: {
 					facingMode: { ideal: 'environment' },
 					width: { ideal: 1920 },
@@ -25,70 +65,99 @@
 				},
 				audio: false,
 			});
-			if (!video) throw new Error('Camera preview is not mounted');
-			video.srcObject = stream;
-			if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
-				await new Promise<void>((resolve, reject) => {
-					const onLoaded = () => {
-						cleanup();
-						resolve();
-					};
-					const onError = () => {
-						cleanup();
-						reject(new Error('Camera metadata unavailable'));
-					};
-					const cleanup = () => {
-						video?.removeEventListener('loadedmetadata', onLoaded);
-						video?.removeEventListener('error', onError);
-					};
-					video?.addEventListener('loadedmetadata', onLoaded, { once: true });
-					video?.addEventListener('error', onError, { once: true });
-				});
+			if (generation !== lifecycleGeneration) {
+				stopTracks(acquiredStream);
+				return;
 			}
+			if (!video) {
+				stopTracks(acquiredStream);
+				throw new Error('Camera preview is not mounted');
+			}
+			stream = acquiredStream;
+			video.srcObject = acquiredStream;
+			await waitForMetadata(video, generation);
+			if (generation !== lifecycleGeneration) return;
 			await video.play();
+			if (generation !== lifecycleGeneration) return;
 			active = true;
 		} catch (cause) {
-			stream?.getTracks().forEach((track) => track.stop());
+			if (generation !== lifecycleGeneration) return;
+			stopTracks(stream);
 			stream = null;
+			if (video) video.srcObject = null;
 			active = false;
 			error =
 				cause instanceof DOMException && cause.name === 'NotAllowedError'
 					? 'Camera permission denied.'
 					: 'Camera unavailable. Use Add Photos below.';
 		} finally {
-			starting = false;
+			if (generation === lifecycleGeneration) starting = false;
 		}
 	}
 
 	function stop() {
-		stream?.getTracks().forEach((track) => track.stop());
+		lifecycleGeneration += 1;
+		cancelMetadataWait?.();
+		cancelMetadataWait = null;
+		if (video) video.srcObject = null;
+		stopTracks(stream);
 		stream = null;
 		active = false;
+		starting = false;
 		torch = false;
+		if (persistingGeneration !== null) {
+			persisting = false;
+			persistingGeneration = null;
+		}
+	}
+
+	function isCaptureGenerationActive(generation: number, captureStream: MediaStream | null) {
+		const currentVideo = video;
+		return Boolean(
+			generation === lifecycleGeneration &&
+			active &&
+			captureStream &&
+			stream === captureStream &&
+			currentVideo?.srcObject === captureStream &&
+			currentVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+			currentVideo.videoWidth > 0 &&
+			currentVideo.videoHeight > 0 &&
+			captureStream.getVideoTracks().some((track) => track.readyState !== 'ended')
+		);
 	}
 
 	async function shutter() {
-		if (persisting) return;
-		if (!video?.videoWidth || !video.videoHeight) return;
-		const scale = Math.min(1, 1920 / Math.max(video.videoWidth, video.videoHeight));
-		const canvas = document.createElement('canvas');
-		canvas.width = Math.round(video.videoWidth * scale);
-		canvas.height = Math.round(video.videoHeight * scale);
-		canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height);
-		const blob = await new Promise<Blob | null>((resolve) =>
-			canvas.toBlob(resolve, 'image/jpeg', 0.82)
-		);
-		if (!blob || blob.size === 0) {
-			error = 'The camera returned an empty photo. Please try again.';
-			return;
-		}
+		const generation = lifecycleGeneration;
+		const captureStream = stream;
+		if (persisting || !isCaptureGenerationActive(generation, captureStream)) return;
+		const currentVideo = video;
+		if (!currentVideo) return;
 		persisting = true;
+		persistingGeneration = generation;
+		const scale = Math.min(1, 1920 / Math.max(currentVideo.videoWidth, currentVideo.videoHeight));
+		const canvas = document.createElement('canvas');
+		canvas.width = Math.round(currentVideo.videoWidth * scale);
+		canvas.height = Math.round(currentVideo.videoHeight * scale);
+		canvas.getContext('2d')?.drawImage(currentVideo, 0, 0, canvas.width, canvas.height);
 		try {
+			const blob = await new Promise<Blob | null>((resolve) =>
+				canvas.toBlob(resolve, 'image/jpeg', 0.82)
+			);
+			if (!isCaptureGenerationActive(generation, captureStream)) return;
+			if (!blob || blob.size === 0) {
+				error = 'The camera returned an empty photo. Please try again.';
+				return;
+			}
 			await oncapture(blob);
 		} catch (cause) {
-			error = cause instanceof Error ? cause.message : 'Photo could not be saved. Try again.';
+			if (generation === lifecycleGeneration) {
+				error = cause instanceof Error ? cause.message : 'Photo could not be saved. Try again.';
+			}
 		} finally {
-			persisting = false;
+			if (persistingGeneration === generation) {
+				persisting = false;
+				persistingGeneration = null;
+			}
 		}
 	}
 
@@ -105,6 +174,7 @@
 		}
 	}
 
+	beforeNavigate(stop);
 	onDestroy(stop);
 </script>
 
@@ -135,5 +205,8 @@
 				{starting ? 'Starting camera…' : 'Start camera'}
 			</Button>
 		</div>
+	{/if}
+	{#if active && error}
+		<p class="px-4 pb-3 text-body-sm text-warning-300" role="status" aria-live="polite">{error}</p>
 	{/if}
 </div>

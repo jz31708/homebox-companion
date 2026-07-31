@@ -3,7 +3,22 @@ import { resolve } from '$app/paths';
 import { items, vision } from '$lib/api';
 import * as bulkMissionDb from '$lib/services/bulkMissionDb';
 import { planBulkObservationChunks } from '$lib/services/bulkAnalysisPlanner';
-import type { BulkCandidateRecord, BulkPhotoRecord } from '$lib/types/bulkDomain';
+import type {
+	BulkMissionRecord,
+	BulkOutboxOperationRecord,
+	BulkPhotoRecord,
+	BulkStructuredError,
+} from '$lib/types/bulkDomain';
+import {
+	cloneOutboxRecord,
+	deepDeproxy,
+	fromAudioRecord,
+	fromCandidateRecord,
+	fromTranscriptSpanRecord,
+	toAudioRecord,
+	toCandidateRecord,
+	toTranscriptSpanRecord,
+} from '$lib/services/bulkRecordMappers';
 import { workflowLogger as log } from '$lib/utils/logger';
 import type {
 	BulkAudioSegment,
@@ -25,6 +40,11 @@ function safeRevoke(url: string): void {
 	if (url.startsWith('blob:')) URL.revokeObjectURL(url);
 }
 
+interface DurableWriteContext {
+	missionId: string;
+	generation: number;
+}
+
 class BulkSweepWorkflow {
 	private missionId = createId('mission_bulk');
 	private _status = $state<BulkSweepStatus>('idle');
@@ -41,17 +61,24 @@ class BulkSweepWorkflow {
 	private _audioSegments = $state<BulkAudioSegment[]>([]);
 	private _transcriptSpans = $state<BulkTranscriptSpan[]>([]);
 	private _rawTranscriptText = $state('');
+	private _canonicalTranscriptText = $state('');
 	private _interimTranscriptText = $state('');
 	private _editedTranscriptText = $state('');
 	private _transcriptEdited = $state(false);
 	private _transcriptSource = $state<BulkTranscriptSource>('none');
 	private _candidates = $state<BulkCandidateItem[]>([]);
+	private _outboxOperations = $state<BulkOutboxOperationRecord[]>([]);
 	private _analysisProgress = $state<Progress | null>(null);
 	private _submissionProgress = $state<Progress | null>(null);
 	private _error = $state<string | null>(null);
 	private _warnings = $state<string[]>([]);
 	private _stats = $state<BulkSweepState['stats']>(null);
 	private abortController: AbortController | null = null;
+	private durableWriteQueue: Promise<void> = Promise.resolve();
+	private durableWriteFailure: unknown = null;
+	private writeGeneration = 0;
+	private initialMissionPersistence: Promise<void> | null = null;
+	private removingPhotoIds = new Set<string>();
 
 	private _stateProxy: BulkSweepState | null = null;
 
@@ -87,6 +114,8 @@ class BulkSweepWorkflow {
 							return workflow._transcriptSpans;
 						case 'rawTranscriptText':
 							return workflow._rawTranscriptText;
+						case 'canonicalTranscriptText':
+							return workflow._canonicalTranscriptText;
 						case 'interimTranscriptText':
 							return workflow._interimTranscriptText;
 						case 'editedTranscriptText':
@@ -97,6 +126,8 @@ class BulkSweepWorkflow {
 							return workflow._transcriptSource;
 						case 'candidates':
 							return workflow._candidates;
+						case 'outboxOperations':
+							return workflow._outboxOperations;
 						case 'analysisProgress':
 							return workflow._analysisProgress;
 						case 'submissionProgress':
@@ -127,38 +158,87 @@ class BulkSweepWorkflow {
 		this._createdAtMs = this._startedAtMs;
 		this._nextCaptureSequence = 0;
 		this._areaLabel = null;
-		void this.persistMission();
+		this.initialMissionPersistence = this.observeDurableWrite(
+			this.persistMission(),
+			'Mission could not be saved. Retry before capturing.'
+		);
 	}
 
 	async transcribeAudioSegment(segmentId: string): Promise<void> {
 		const segment = this._audioSegments.find((entry) => entry.id === segmentId);
 		if (!segment) return;
+		const context = this.captureWriteContext();
+		const retryCount = (segment.retryCount ?? 0) + 1;
 		try {
 			const result = await vision.transcribeAudio(segment.file, `${segmentId}.webm`);
 			const text = result.text.trim();
 			if (!text) throw new Error('Server returned an empty transcript');
+			if (!this.isCurrentWriteContext(context)) return;
 			this._audioSegments = this._audioSegments.map((entry) =>
-				entry.id === segmentId ? { ...entry, transcriptStatus: 'done', rawTranscript: text } : entry
+				entry.id === segmentId
+					? {
+							...entry,
+							transcriptStatus: 'done',
+							status: 'done',
+							transcript: text,
+							rawTranscript: text,
+							source: 'server',
+							error: null,
+							retryCount,
+						}
+					: entry
 			);
-			this.appendLiveTranscript(text, true);
-			await bulkMissionDb.addOrUpdateAudio({
-				schemaVersion: 2,
-				missionId: this.missionId,
-				id: segmentId,
-				status: 'done',
-				blob: segment.file,
-				mimeType: segment.mimeType,
-				byteSize: segment.file.size,
-				startedAtMs: segment.startedAtMs,
-				endedAtMs: segment.endedAtMs,
-				rawTranscript: text,
+			await this.appendLiveTranscript(text, true, 'server', context.missionId);
+			if (!this.isCurrentWriteContext(context)) return;
+			const completedSegment = {
+				...segment,
+				transcriptStatus: 'done' as const,
+				status: 'done' as const,
 				transcript: text,
-				source: 'server',
+				rawTranscript: text,
+				source: 'server' as const,
 				error: null,
-				retryCount: 0,
+				retryCount,
+			};
+			const missionSnapshot = this.buildMissionSnapshot(context);
+			await this.enqueueDurableWrite(async (queuedContext) => {
+				await bulkMissionDb.addOrUpdateAudio(
+					toAudioRecord(completedSegment, queuedContext.missionId)
+				);
+				if (missionSnapshot) await this.persistMissionNow(missionSnapshot, queuedContext);
 			});
+			if (!this.isCurrentWriteContext(context)) return;
 			await this.persistMission();
 		} catch (error) {
+			if (!this.isCurrentWriteContext(context)) return;
+			const structuredError: BulkStructuredError = {
+				code: 'TRANSCRIPTION_FAILED',
+				message: error instanceof Error ? error.message : 'Server transcription failed',
+				retryable: true,
+			};
+			const failedSegment = {
+				...segment,
+				transcriptStatus: 'failed' as const,
+				status: 'failed' as const,
+				error: structuredError,
+				retryCount,
+			};
+			this._audioSegments = this._audioSegments.map((entry) =>
+				entry.id === segmentId ? failedSegment : entry
+			);
+			this._error = `Transcription failed for this recording. Retry transcription.`;
+			this._interimTranscriptText = this._error;
+			const missionSnapshot = this.buildMissionSnapshot(context);
+			try {
+				await this.enqueueDurableWrite(async (queuedContext) => {
+					await bulkMissionDb.addOrUpdateAudio(
+						toAudioRecord(failedSegment, queuedContext.missionId)
+					);
+					if (missionSnapshot) await this.persistMissionNow(missionSnapshot, queuedContext);
+				});
+			} catch (persistenceError) {
+				log.error('Bulk transcription failure could not be persisted', persistenceError);
+			}
 			log.warn('Bulk server transcription unavailable; audio remains persisted', error);
 		}
 	}
@@ -166,16 +246,80 @@ class BulkSweepWorkflow {
 	setParentItem(id: string | null, name: string | null): void {
 		this._parentItemId = id;
 		this._parentItemName = name;
-		void this.persistMission();
+		this.observeDurableWrite(this.persistMission(), 'Location context could not be saved. Retry.');
 	}
 
 	setAreaLabel(label: string): void {
 		this._areaLabel = label.trim() || null;
-		void this.persistMission();
+		this.observeDurableWrite(this.persistMission(), 'Area label could not be saved. Retry.');
 	}
 
 	getTargetParentId(): string | null {
 		return this._parentItemId ?? this._locationId;
+	}
+
+	private captureWriteContext(): DurableWriteContext {
+		return { missionId: this.missionId, generation: this.writeGeneration };
+	}
+
+	private isCurrentWriteContext(context: DurableWriteContext): boolean {
+		return context.missionId === this.missionId && context.generation === this.writeGeneration;
+	}
+
+	private invalidateQueuedWrites(): void {
+		this.writeGeneration += 1;
+		this.durableWriteFailure = null;
+	}
+
+	private enqueueDurableWrite<T>(
+		operation: (context: DurableWriteContext) => Promise<T>
+	): Promise<T> {
+		const context = this.captureWriteContext();
+		const run = async (): Promise<T> => {
+			if (!this.isCurrentWriteContext(context)) return undefined as T;
+			return operation(context);
+		};
+		const next = this.durableWriteQueue.then(run, run);
+		this.durableWriteQueue = next.then(
+			() => {
+				if (this.isCurrentWriteContext(context)) this.durableWriteFailure = null;
+			},
+			(error) => {
+				if (!this.isCurrentWriteContext(context)) return;
+				this.durableWriteFailure = error;
+				this._error = error instanceof Error ? error.message : 'Durable save failed. Retry.';
+			}
+		);
+		return next;
+	}
+
+	private observeDurableWrite<T>(promise: Promise<T>, message: string): Promise<T> {
+		const context = this.captureWriteContext();
+		const observed = promise.catch((error) => {
+			if (!this.isCurrentWriteContext(context)) throw error;
+			this._error = message;
+			this._interimTranscriptText = message;
+			log.error(message, error);
+			throw error;
+		});
+		// Keep intentionally scheduled writes handled while preserving an
+		// awaitable rejection for callers that need to block on durability.
+		observed.catch(() => undefined);
+		return observed;
+	}
+
+	/** Await all mission/audio/transcript writes before analysis, navigation, or reload-sensitive work. */
+	async flushPersistence(): Promise<void> {
+		await this.durableWriteQueue;
+		if (this.durableWriteFailure) {
+			const failure = this.durableWriteFailure;
+			this.durableWriteFailure = null;
+			throw failure;
+		}
+	}
+
+	async flushTranscriptPersistence(): Promise<void> {
+		await this.flushPersistence();
 	}
 
 	async recover(): Promise<boolean> {
@@ -191,10 +335,12 @@ class BulkSweepWorkflow {
 		this._locationPath = mission.locationPath ?? mission.areaLabel;
 		this._areaLabel = mission.areaLabel;
 		this._parentItemId = mission.parentItemId;
+		this._parentItemName = mission.parentItemName ?? null;
 		this._startedAtMs = mission.startedAtMs ?? mission.updatedAtMs;
 		this._createdAtMs = mission.createdAtMs ?? mission.startedAtMs ?? mission.updatedAtMs;
 		this._nextCaptureSequence = mission.nextCaptureSequence ?? mission.photoIds.length;
 		this._rawTranscriptText = mission.rawTranscript ?? '';
+		this._canonicalTranscriptText = mission.canonicalTranscript ?? this._rawTranscriptText;
 		this._editedTranscriptText =
 			mission.editedTranscript ?? mission.canonicalTranscript ?? this._rawTranscriptText;
 		this._transcriptEdited = mission.transcriptEdited ?? false;
@@ -209,69 +355,22 @@ class BulkSweepWorkflow {
 			groupLabel: photo.groupLabel,
 			ignored: photo.ignored,
 		}));
-		this._audioSegments = bundle.audio.map((audio) => ({
-			id: audio.id,
-			file: audio.blob,
-			mimeType: audio.mimeType,
-			startedAtMs: audio.startedAtMs,
-			endedAtMs: audio.endedAtMs,
-			transcriptStatus:
-				audio.status === 'done' ? 'done' : audio.status === 'failed' ? 'failed' : 'pending',
-			rawTranscript: audio.rawTranscript,
-		}));
-		this._transcriptSpans = bundle.spans.map((span) => ({
-			id: span.id,
-			text: span.text,
-			startMs: span.startOffsetMs ?? undefined,
-			endMs: span.endOffsetMs ?? undefined,
-			sourceAudioSegmentId: span.sourceAudioSegmentId ?? undefined,
-		}));
-		const durableCandidates = bundle.candidates;
-		this._candidates = durableCandidates.map((candidate) => ({
-			id: candidate.id,
-			name: candidate.name,
-			quantity: candidate.quantity,
-			description: candidate.description ?? null,
-			tag_ids: candidate.tagIds ?? [],
-			manufacturer: candidate.manufacturer ?? null,
-			model_number: candidate.modelNumber ?? null,
-			serial_number: candidate.serialNumber ?? null,
-			purchase_price: candidate.purchasePrice ?? null,
-			purchase_from: candidate.purchaseFrom ?? null,
-			notes: candidate.notes ?? null,
-			custom_fields: candidate.customFields ?? {},
-			confidence: 0,
-			status:
-				candidate.state === 'submitted'
-					? 'submitted'
-					: candidate.state === 'accepted'
-						? 'accepted'
-						: candidate.state === 'rejected'
-							? 'rejected'
-							: 'needs_review',
-			evidence: candidate.evidencePhotoIds.map((photoId) => ({
-				photoId,
-				reason: 'Persisted candidate evidence',
-			})),
-			sourcePhotoIds: candidate.evidencePhotoIds,
-			uncertaintyReasons: candidate.warningCodes,
-			duplicateCandidateIds: [],
-			duplicateExistingItemId: candidate.duplicateMatches[0]?.existingItemId ?? null,
-			suggestedAction:
-				(candidate.suggestedAction as BulkCandidateItem['suggestedAction']) ?? 'review',
-			correctionHistory: candidate.correctionHistory ?? [],
-			payloadSnapshot: candidate.payloadSnapshot ?? null,
-			originalFiles: candidate.evidencePhotoIds
-				.map((photoId) => this._photos.find((photo) => photo.id === photoId)?.file)
-				.filter((file): file is File => Boolean(file)),
-		}));
+		this._audioSegments = bundle.audio.map(fromAudioRecord);
+		this._transcriptSpans = bundle.spans.map(fromTranscriptSpanRecord);
+		this._candidates = bundle.candidates.map((candidate) =>
+			fromCandidateRecord(candidate, this._photos, this._transcriptSpans)
+		);
+		this._outboxOperations = bundle.outbox.map(cloneOutboxRecord);
 		this._status = this._status === 'analyzing' ? 'transcript_review' : this._status;
 		this._error = mission.lastError?.message ?? null;
 		return true;
 	}
 
 	async discardPersistedMission(): Promise<void> {
-		await bulkMissionDb.discardMission(this.missionId);
+		const missionId = this.missionId;
+		this.invalidateQueuedWrites();
+		await this.durableWriteQueue;
+		await bulkMissionDb.discardMission(missionId);
 		this.reset();
 	}
 
@@ -281,7 +380,10 @@ class BulkSweepWorkflow {
 		const locationPath = this._locationPath;
 		const parentId = this._parentItemId;
 		const parentName = this._parentItemName;
-		await bulkMissionDb.discardMission(this.missionId);
+		const missionId = this.missionId;
+		this.invalidateQueuedWrites();
+		await this.durableWriteQueue;
+		await bulkMissionDb.discardMission(missionId);
 		this.reset();
 		if (locationId && locationName && locationPath) {
 			this.start(locationId, locationName, locationPath);
@@ -291,28 +393,65 @@ class BulkSweepWorkflow {
 	}
 
 	async finishLocation(): Promise<void> {
-		await bulkMissionDb.discardMission(this.missionId);
+		const missionId = this.missionId;
+		this.invalidateQueuedWrites();
+		await this.durableWriteQueue;
+		await bulkMissionDb.discardMission(missionId);
 		this.reset();
 		goto(resolve('/location'));
 	}
 
 	async addPhotos(files: File[]): Promise<void> {
-		if (!this._startedAtMs) this._startedAtMs = Date.now();
+		const context = this.captureWriteContext();
+		const initialMissionPersistence = this.initialMissionPersistence;
 		const now = Date.now();
+		const startedAtMs = this._startedAtMs ?? now;
+		const createdAtMs = this._createdAtMs ?? startedAtMs;
+		const missionSnapshot: BulkMissionRecord = {
+			schemaVersion: 2,
+			id: context.missionId,
+			status: this._status,
+			locationId: this._locationId ?? '',
+			locationName: this._locationName ?? '',
+			locationPath: this._locationPath ?? '',
+			parentItemId: this._parentItemId,
+			parentItemName: this._parentItemName,
+			areaLabel: this._areaLabel ?? '',
+			createdAtMs,
+			startedAtMs,
+			updatedAtMs: now,
+			photoIds: this._photos.map((photo) => photo.id),
+			audioSegmentIds: this._audioSegments.map((audio) => audio.id),
+			transcriptSpanIds: this._transcriptSpans.map((span) => span.id),
+			observationChunkIds: [],
+			candidateIds: this._candidates.map((candidate) => candidate.id),
+			outboxOperationIds: this._outboxOperations.map((operation) => operation.id),
+			chunkSize: 6,
+			lastError: this._error ? { code: 'WORKFLOW', message: this._error, retryable: true } : null,
+			rawTranscript: this._rawTranscriptText,
+			canonicalTranscript: this._canonicalTranscriptText || this._rawTranscriptText,
+			editedTranscript: this._editedTranscriptText,
+			transcriptEdited: this._transcriptEdited,
+			transcriptSource: this._transcriptSource,
+			nextCaptureSequence: this._nextCaptureSequence,
+		};
 		const added = files.map((file) => ({
 			id: createId('p'),
 			file,
 			previewUrl: URL.createObjectURL(file),
 			takenAtMs: now,
-			sessionOffsetMs: now - (this._startedAtMs ?? now),
+			sessionOffsetMs: now - startedAtMs,
 			note: '',
 			groupLabel: '',
 			ignored: false,
 		}));
+		const revokeTemporaryPreviews = () => {
+			for (const photo of added) safeRevoke(photo.previewUrl);
+		};
 		const firstSequence = this._nextCaptureSequence;
 		const records: BulkPhotoRecord[] = added.map((photo, index) => ({
 			schemaVersion: 2,
-			missionId: this.missionId,
+			missionId: context.missionId,
 			id: photo.id,
 			status: 'ready',
 			blob: photo.file,
@@ -327,59 +466,99 @@ class BulkSweepWorkflow {
 			captureSequence: firstSequence + index,
 		}));
 		try {
-			await bulkMissionDb.appendPhotosAndUpdateMission(
-				{
-					schemaVersion: 2,
-					id: this.missionId,
-					status: this._status,
-					locationId: this._locationId ?? '',
-					locationName: this._locationName ?? '',
-					locationPath: this._locationPath ?? '',
-					parentItemId: this._parentItemId,
-					areaLabel: this._areaLabel ?? '',
-					createdAtMs: this._createdAtMs ?? now,
-					startedAtMs: this._startedAtMs ?? now,
-					updatedAtMs: now,
-					photoIds: [], audioSegmentIds: [], transcriptSpanIds: [], observationChunkIds: [],
-					candidateIds: [], outboxOperationIds: [],
-					chunkSize: 6,
-					lastError: null,
-				},
+			if (initialMissionPersistence) await initialMissionPersistence;
+			if (!this.isCurrentWriteContext(context)) {
+				revokeTemporaryPreviews();
+				return;
+			}
+			const appendResult = await bulkMissionDb.appendPhotosAndUpdateMission(
+				missionSnapshot,
 				records
 			);
+			if (!this.isCurrentWriteContext(context)) {
+				revokeTemporaryPreviews();
+				return;
+			}
+			const committedPhotos = appendResult.photos;
+			const committedMission = appendResult.mission;
+			this._photos = [
+				...this._photos,
+				...committedPhotos.map((photo) => ({
+					id: photo.id,
+					file: new File([photo.blob], photo.filename, { type: photo.mimeType }),
+					previewUrl: URL.createObjectURL(photo.blob),
+					takenAtMs: photo.takenAtMs,
+					sessionOffsetMs: photo.sessionOffsetMs,
+					note: photo.note,
+					groupLabel: photo.groupLabel,
+					ignored: photo.ignored,
+				})),
+			];
+			this._nextCaptureSequence =
+				committedMission.nextCaptureSequence ??
+				Math.max(0, ...committedPhotos.map((photo) => photo.captureSequence + 1));
+			revokeTemporaryPreviews();
 		} catch (error) {
-			for (const photo of added) safeRevoke(photo.previewUrl);
+			revokeTemporaryPreviews();
+			if (!this.isCurrentWriteContext(context)) return;
 			throw new Error('Photo could not be saved. Earlier evidence was preserved.', {
 				cause: error,
 			});
 		}
-		this._photos = [...this._photos, ...added];
-		this._nextCaptureSequence += records.length;
 	}
 
 	async updatePhoto(
 		id: string,
 		patch: Partial<Pick<BulkCapturedPhoto, 'note' | 'groupLabel' | 'ignored'>>
 	): Promise<void> {
-		this._photos = this._photos.map((photo) => (photo.id === id ? { ...photo, ...patch } : photo));
 		const photo = this._photos.find((entry) => entry.id === id);
-		if (photo)
-			await bulkMissionDb.addOrUpdatePhoto({
-				schemaVersion: 2,
-				missionId: this.missionId,
-				id: photo.id,
-				status: photo.ignored ? 'ignored' : 'ready',
-				blob: photo.file,
-				filename: photo.file.name,
-				mimeType: photo.file.type || 'image/jpeg',
-				byteSize: photo.file.size,
-				takenAtMs: photo.takenAtMs,
-				sessionOffsetMs: photo.sessionOffsetMs,
-				note: photo.note,
-				groupLabel: photo.groupLabel,
-				ignored: photo.ignored,
-				captureSequence: await this.captureSequenceFor(photo.id),
-			});
+		if (!photo) return;
+		const captureSequence = await this.captureSequenceFor(photo.id);
+		const proposed = { ...photo, ...patch };
+		const dbWithAtomicPhotoPatch = bulkMissionDb as typeof bulkMissionDb & {
+			updatePhoto?: (
+				missionId: string,
+				photoId: string,
+				patch: Partial<Pick<BulkPhotoRecord, 'note' | 'groupLabel' | 'ignored' | 'status'>>
+			) => Promise<BulkPhotoRecord | void>;
+		};
+		const persisted = dbWithAtomicPhotoPatch.updatePhoto
+			? await dbWithAtomicPhotoPatch.updatePhoto(this.missionId, id, {
+					...patch,
+					status: proposed.ignored ? 'ignored' : 'ready',
+				})
+			: await bulkMissionDb.addOrUpdatePhoto({
+					schemaVersion: 2,
+					missionId: this.missionId,
+					id: proposed.id,
+					status: proposed.ignored ? 'ignored' : 'ready',
+					blob: proposed.file,
+					filename: proposed.file.name,
+					mimeType: proposed.file.type || 'image/jpeg',
+					byteSize: proposed.file.size,
+					takenAtMs: proposed.takenAtMs,
+					sessionOffsetMs: proposed.sessionOffsetMs,
+					note: proposed.note,
+					groupLabel: proposed.groupLabel,
+					ignored: proposed.ignored,
+					captureSequence,
+				});
+		const committed = persisted && 'blob' in persisted ? persisted : null;
+		this._photos = this._photos.map((entry) =>
+			entry.id === id
+				? {
+						...entry,
+						...patch,
+						...(committed
+							? {
+									file: new File([committed.blob], committed.filename, {
+										type: committed.mimeType,
+									}),
+								}
+							: {}),
+					}
+				: entry
+		);
 	}
 
 	private async captureSequenceFor(id: string): Promise<number> {
@@ -388,83 +567,110 @@ class BulkSweepWorkflow {
 	}
 
 	async removePhoto(id: string): Promise<void> {
+		if (this.removingPhotoIds.has(id)) return;
 		const removed = this._photos.find((photo) => photo.id === id);
-		await bulkMissionDb.removePhoto(this.missionId, id);
-		if (removed) safeRevoke(removed.previewUrl);
-		this._photos = this._photos.filter((photo) => photo.id !== id);
-		this._candidates = this._candidates.filter(
-			(candidate) => !candidate.sourcePhotoIds.includes(id)
-		);
-		await this.persistCandidateRecords();
-	}
-
-	addAudioSegment(blob: Blob, mimeType: string, startedAtMs: number, endedAtMs: number): void {
-		this._audioSegments = [
-			...this._audioSegments,
-			{
-				id: createId('a'),
-				file: blob,
-				mimeType,
-				startedAtMs,
-				endedAtMs,
-				transcriptStatus: 'pending',
-			},
-		];
-		const segment = this._audioSegments.at(-1);
-		if (segment)
-			void bulkMissionDb.addOrUpdateAudio({
-				schemaVersion: 2,
-				missionId: this.missionId,
-				id: segment.id,
-				status: 'persisted',
-				blob: segment.file,
-				mimeType: segment.mimeType,
-				byteSize: segment.file.size,
-				startedAtMs,
-				endedAtMs,
-				rawTranscript: '',
-				error: null,
-				retryCount: 0,
-			});
-		void this.persistMission();
-	}
-
-	appendLiveTranscript(text: string, final = false): void {
-		if (!text.trim()) return;
-		this._transcriptSource = this._transcriptSource === 'manual' ? 'mixed' : 'live';
-		if (final) {
-			this._rawTranscriptText = [this._rawTranscriptText, text].filter(Boolean).join(' ').trim();
-			if (!this._transcriptEdited) this._editedTranscriptText = this._rawTranscriptText;
-			this._interimTranscriptText = '';
-			this._transcriptSpans = [
-				...this._transcriptSpans,
-				{ id: createId('t'), text, startMs: 0, endMs: undefined },
-			];
-			const span = this._transcriptSpans.at(-1);
-			if (span)
-				void bulkMissionDb.saveSpan({
-					schemaVersion: 2,
-					missionId: this.missionId,
-					id: span.id,
-					sourceAudioSegmentId: this._audioSegments.at(-1)?.id ?? null,
-					text: span.text,
-					startOffsetMs: span.startMs ?? 0,
-					endOffsetMs: span.endMs ?? null,
-					source: this._transcriptSource === 'live' ? 'live_preview' : 'manual',
-					canonical: !this._transcriptEdited,
-				});
-			void this.persistMission();
-		} else {
-			this._interimTranscriptText = text;
+		if (!removed) return;
+		this.removingPhotoIds.add(id);
+		try {
+			await bulkMissionDb.removePhoto(this.missionId, id);
+			if (removed) safeRevoke(removed.previewUrl);
+			this._photos = this._photos.filter((photo) => photo.id !== id);
+			this._candidates = this._candidates.filter(
+				(candidate) => !candidate.sourcePhotoIds.includes(id)
+			);
+			this._outboxOperations = this._outboxOperations.filter(
+				(operation) => !operation.evidencePhotoIds.includes(id)
+			);
+		} catch (error) {
+			this._error = 'Photo could not be removed. Earlier evidence remains safe; retry.';
+			throw error;
+		} finally {
+			this.removingPhotoIds.delete(id);
 		}
 	}
 
-	editTranscript(text: string): void {
+	addAudioSegment(
+		blob: Blob,
+		mimeType: string,
+		startedAtMs: number,
+		endedAtMs: number,
+		expectedMissionId?: string
+	): Promise<void> {
+		if (expectedMissionId && expectedMissionId !== this.missionId) return Promise.resolve();
+		const context = this.captureWriteContext();
+		const segment: BulkAudioSegment = {
+			id: createId('a'),
+			file: blob,
+			mimeType,
+			startedAtMs,
+			endedAtMs,
+			transcriptStatus: 'pending',
+			status: 'persisted',
+			rawTranscript: '',
+		};
+		if (!this.isCurrentWriteContext(context)) return Promise.resolve();
+		this._audioSegments = [...this._audioSegments, segment];
+		const missionSnapshot = this.buildMissionSnapshot(context);
+		return this.enqueueDurableWrite(async (queuedContext) => {
+			await bulkMissionDb.addOrUpdateAudio(toAudioRecord(segment, queuedContext.missionId));
+			if (missionSnapshot) await this.persistMissionNow(missionSnapshot, queuedContext);
+		});
+	}
+
+	appendLiveTranscript(
+		text: string,
+		final = false,
+		source: 'server' | 'live_preview' | 'manual' = 'live_preview',
+		expectedMissionId?: string
+	): Promise<void> {
+		if (expectedMissionId && expectedMissionId !== this.missionId) return Promise.resolve();
+		if (!text.trim()) return Promise.resolve();
+		const context = this.captureWriteContext();
+		if (!this.isCurrentWriteContext(context)) return Promise.resolve();
+		this._transcriptSource =
+			this._transcriptSource === 'manual'
+				? 'mixed'
+				: source === 'server'
+					? 'server'
+					: source === 'manual'
+						? 'manual'
+						: 'live';
+		if (final) {
+			this._rawTranscriptText = [this._rawTranscriptText, text].filter(Boolean).join(' ').trim();
+			if (!this._transcriptEdited) {
+				this._editedTranscriptText = this._rawTranscriptText;
+				this._canonicalTranscriptText = this._rawTranscriptText;
+			}
+			this._interimTranscriptText = '';
+			const span: BulkTranscriptSpan = {
+				id: createId('t'),
+				text,
+				startMs: 0,
+				endMs: undefined,
+				startOffsetMs: 0,
+				endOffsetMs: null,
+				sourceAudioSegmentId: this._audioSegments.at(-1)?.id,
+				source,
+				canonical: !this._transcriptEdited,
+			};
+			this._transcriptSpans = [...this._transcriptSpans, span];
+			const missionSnapshot = this.buildMissionSnapshot(context);
+			return this.enqueueDurableWrite(async (queuedContext) => {
+				await bulkMissionDb.saveSpan(toTranscriptSpanRecord(span, queuedContext.missionId));
+				if (missionSnapshot) await this.persistMissionNow(missionSnapshot, queuedContext);
+			});
+		} else {
+			this._interimTranscriptText = text;
+			return Promise.resolve();
+		}
+	}
+
+	editTranscript(text: string): Promise<void> {
 		this._editedTranscriptText = text;
 		this._transcriptEdited = text !== this._rawTranscriptText;
 		this._transcriptSource =
 			this._transcriptSource === 'none' || this._transcriptSource === 'manual' ? 'manual' : 'mixed';
-		void this.persistMission();
+		return this.persistMission();
 	}
 
 	enterTranscriptReview(): void {
@@ -472,6 +678,10 @@ class BulkSweepWorkflow {
 		if (!this._editedTranscriptText && this._rawTranscriptText) {
 			this._editedTranscriptText = this._rawTranscriptText;
 		}
+		this.observeDurableWrite(
+			this.persistMission(),
+			'Transcript review state could not be saved. Retry.'
+		);
 	}
 
 	async analyze(): Promise<BulkDetectResponse | null> {
@@ -480,6 +690,7 @@ class BulkSweepWorkflow {
 			this._error = 'Add at least one non-ignored photo before analysis.';
 			return null;
 		}
+		await this.flushPersistence();
 		this.abortController = new AbortController();
 		this._status = 'analyzing';
 		this._analysisProgress = {
@@ -607,45 +818,7 @@ class BulkSweepWorkflow {
 			this._stats = result.stats;
 			await bulkMissionDb.replaceCandidates(
 				this.missionId,
-				candidates.map((candidate): BulkCandidateRecord => ({
-					schemaVersion: 2,
-					missionId: this.missionId,
-					id: candidate.id,
-					state:
-						candidate.status === 'submitted'
-							? 'submitted'
-							: candidate.status === 'accepted'
-								? 'accepted'
-								: 'needs_review',
-					reviewTier: candidate.uncertaintyReasons.length ? 'attention' : 'ready',
-					name: candidate.name,
-					quantity: Math.max(1, candidate.quantity),
-					entityMode: candidate.quantity > 1 ? 'grouped' : 'individual',
-					quantityBasis: candidate.quantity > 1 ? 'unknown' : 'distinct_entities',
-					sourceObservationIds: candidate.sourcePhotoIds.map(
-						(photoId: string) => `${this.missionId}:photo:${photoId}`
-					),
-					evidencePhotoIds: candidate.sourcePhotoIds,
-					evidenceTranscriptSpanIds: candidate.evidence
-						.map((ref: { transcriptSpanId?: string }) => ref.transcriptSpanId)
-						.filter((id: string | undefined): id is string => Boolean(id)),
-					blockerCodes: [],
-					warningCodes: candidate.quantity > 1 ? ['quantity_unconfirmed'] : [],
-					duplicateMatches: [],
-					createdHomeboxItemId: null,
-					description: candidate.description,
-					tagIds: candidate.tag_ids ?? [],
-					manufacturer: candidate.manufacturer,
-					modelNumber: candidate.model_number,
-					serialNumber: candidate.serial_number,
-					purchasePrice: candidate.purchase_price,
-					purchaseFrom: candidate.purchase_from,
-					notes: candidate.notes,
-					customFields: candidate.custom_fields ?? {},
-					suggestedAction: candidate.suggestedAction,
-					correctionHistory: [],
-					payloadSnapshot: null,
-				}))
+				candidates.map((candidate) => toCandidateRecord(candidate, this.missionId))
 			);
 			await this.persistMission();
 			this._status = hasFailedChunks ? 'transcript_review' : 'reviewing';
@@ -657,6 +830,7 @@ class BulkSweepWorkflow {
 				this._error = error instanceof Error ? error.message : 'Bulk analysis failed';
 			}
 			this._status = 'transcript_review';
+			await this.persistMission();
 			return null;
 		} finally {
 			this.abortController = null;
@@ -681,8 +855,9 @@ class BulkSweepWorkflow {
 		this._candidates = this._candidates.map((candidate) =>
 			candidate.id === id ? { ...candidate, ...patch } : candidate
 		);
-		void this.persistCandidateRecords().catch((error) =>
-			log.error('Candidate persistence failed', error)
+		this.observeDurableWrite(
+			this.persistCandidateRecords(),
+			'Candidate changes could not be saved. Retry.'
 		);
 	}
 
@@ -711,65 +886,20 @@ class BulkSweepWorkflow {
 		this._candidates = this._candidates.map((candidate) =>
 			this.isCandidateSubmittable(candidate) ? { ...candidate, status: 'accepted' } : candidate
 		);
-		void this.persistCandidateRecords();
+		this.observeDurableWrite(
+			this.persistCandidateRecords(),
+			'Candidate changes could not be saved. Retry.'
+		);
 	}
 
 	private async persistCandidateRecords(): Promise<void> {
-		const records: BulkCandidateRecord[] = [];
-		const existingBundle = await bulkMissionDb.loadMissionBundle(this.missionId);
-		for (const candidate of this._candidates) {
-			const previous = existingBundle?.candidates.find((entry) => entry.id === candidate.id);
-			const record: BulkCandidateRecord = {
-				schemaVersion: 2,
-				missionId: this.missionId,
-				id: candidate.id,
-				state:
-					candidate.status === 'submitted'
-						? 'submitted'
-						: candidate.status === 'accepted'
-							? 'accepted'
-							: candidate.status === 'rejected'
-								? 'rejected'
-								: 'needs_review',
-				reviewTier: candidate.uncertaintyReasons.length ? 'attention' : 'ready',
-				name: candidate.name,
-				quantity: Math.max(1, candidate.quantity),
-				entityMode: candidate.quantity > 1 ? 'grouped' : 'individual',
-				quantityBasis: candidate.quantity > 1 ? 'unknown' : 'distinct_entities',
-				sourceObservationIds: candidate.sourcePhotoIds,
-				evidencePhotoIds: candidate.sourcePhotoIds,
-				evidenceTranscriptSpanIds: candidate.evidence
-					.map((ref) => ref.transcriptSpanId)
-					.filter((span): span is string => Boolean(span)),
-				blockerCodes: [],
-				warningCodes: candidate.uncertaintyReasons,
-				duplicateMatches: candidate.duplicateExistingItemId
-					? [
-							{
-								existingItemId: candidate.duplicateExistingItemId,
-								matchKind: 'advisory',
-								reasons: ['Review required'],
-							},
-						]
-					: [],
-				createdHomeboxItemId: null,
-				description: candidate.description,
-				tagIds: candidate.tag_ids ?? [],
-				manufacturer: candidate.manufacturer,
-				modelNumber: candidate.model_number,
-				serialNumber: candidate.serial_number,
-				purchasePrice: candidate.purchase_price,
-				purchaseFrom: candidate.purchase_from,
-				notes: candidate.notes,
-				customFields: candidate.custom_fields ?? {},
-				suggestedAction: candidate.suggestedAction,
-				correctionHistory: candidate.correctionHistory ?? previous?.correctionHistory ?? [],
-				payloadSnapshot: candidate.payloadSnapshot ?? previous?.payloadSnapshot ?? null,
-			};
-			const clone = JSON.parse(JSON.stringify(record)) as BulkCandidateRecord;
-			records.push(clone);
-		}
-		await bulkMissionDb.replaceCandidates(this.missionId, records);
+		const context = this.captureWriteContext();
+		const candidates = this._candidates.map((candidate) =>
+			toCandidateRecord(candidate, context.missionId)
+		);
+		await this.enqueueDurableWrite((queuedContext) =>
+			bulkMissionDb.replaceCandidates(queuedContext.missionId, candidates)
+		);
 	}
 
 	async persistCandidates(): Promise<void> {
@@ -793,7 +923,6 @@ class BulkSweepWorkflow {
 				purchase_from: null,
 				notes: null,
 				custom_fields: {},
-				confidence: 0,
 				status: 'needs_review',
 				evidence: [],
 				sourcePhotoIds: [],
@@ -804,8 +933,9 @@ class BulkSweepWorkflow {
 				originalFiles: [],
 			},
 		];
-		void this.persistCandidateRecords().catch((error) =>
-			log.error('Candidate persistence failed', error)
+		this.observeDurableWrite(
+			this.persistCandidateRecords(),
+			'Candidate changes could not be saved. Retry.'
 		);
 		return id;
 	}
@@ -826,6 +956,17 @@ class BulkSweepWorkflow {
 			status: 'needs_review' as const,
 			sourcePhotoIds: [...new Set(selected.flatMap((candidate) => candidate.sourcePhotoIds))],
 			evidence: selected.flatMap((candidate) => candidate.evidence),
+			entityMode: 'grouped' as const,
+			quantityBasis,
+			sourceObservationIds: [
+				...new Set(selected.flatMap((candidate) => candidate.sourceObservationIds ?? [])),
+			],
+			evidenceTranscriptSpanIds: [
+				...new Set(selected.flatMap((candidate) => candidate.evidenceTranscriptSpanIds ?? [])),
+			],
+			blockerCodes: [...new Set(selected.flatMap((candidate) => candidate.blockerCodes ?? []))],
+			warningCodes: [...new Set(selected.flatMap((candidate) => candidate.warningCodes ?? []))],
+			duplicateMatches: selected.flatMap((candidate) => candidate.duplicateMatches ?? []),
 			uncertaintyReasons: [
 				...new Set(
 					selected
@@ -838,8 +979,9 @@ class BulkSweepWorkflow {
 			...this._candidates.filter((candidate) => !ids.includes(candidate.id)),
 			merged,
 		];
-		void this.persistCandidateRecords().catch((error) =>
-			log.error('Candidate persistence failed', error)
+		this.observeDurableWrite(
+			this.persistCandidateRecords(),
+			'Candidate changes could not be saved. Retry.'
 		);
 	}
 
@@ -861,8 +1003,9 @@ class BulkSweepWorkflow {
 			},
 		];
 		this._candidates = [...this._candidates.filter((entry) => entry.id !== id), ...split];
-		void this.persistCandidateRecords().catch((error) =>
-			log.error('Candidate persistence failed', error)
+		this.observeDurableWrite(
+			this.persistCandidateRecords(),
+			'Candidate changes could not be saved. Retry.'
 		);
 	}
 
@@ -873,6 +1016,11 @@ class BulkSweepWorkflow {
 						...candidate,
 						duplicateExistingItemId:
 							action === 'use_existing' ? candidate.duplicateExistingItemId : null,
+						duplicateResolution: {
+							action,
+							existingItemId: action === 'use_existing' ? candidate.duplicateExistingItemId : null,
+							atMs: Date.now(),
+						},
 						suggestedAction: action === 'use_existing' ? 'merge' : candidate.suggestedAction,
 						status: action === 'use_existing' ? 'accepted' : candidate.status,
 						uncertaintyReasons:
@@ -884,11 +1032,27 @@ class BulkSweepWorkflow {
 					}
 				: candidate
 		);
-		void this.persistCandidateRecords();
+		this.observeDurableWrite(
+			this.persistCandidateRecords(),
+			'Candidate changes could not be saved. Retry.'
+		);
 	}
 
 	acceptHighConfidence(): void {
 		this.acceptReadyCandidates();
+	}
+
+	private async saveOutbox(operation: BulkOutboxOperationRecord): Promise<void> {
+		const durableOperation = cloneOutboxRecord(operation);
+		await this.enqueueDurableWrite(async (context) => {
+			const boundOperation = { ...durableOperation, missionId: context.missionId };
+			await bulkMissionDb.saveOutbox(boundOperation);
+			if (!this.isCurrentWriteContext(context)) return;
+			this._outboxOperations = [
+				...this._outboxOperations.filter((entry) => entry.id !== boundOperation.id),
+				boundOperation,
+			];
+		});
 	}
 
 	get acceptedCandidates(): BulkCandidateItem[] {
@@ -912,7 +1076,7 @@ class BulkSweepWorkflow {
 					this._status = 'reviewing';
 					return false;
 				}
-				const payload = {
+				const payload = deepDeproxy({
 					name: candidate.name,
 					quantity: candidate.quantity,
 					description: candidate.description,
@@ -929,9 +1093,9 @@ class BulkSweepWorkflow {
 					existing_item_id:
 						candidate.suggestedAction === 'merge' ? candidate.duplicateExistingItemId : null,
 					existing_item_action: candidate.suggestedAction === 'merge' ? 'increase_quantity' : null,
-				};
+				});
 				const requestHash = JSON.stringify(payload);
-				await bulkMissionDb.saveOutbox({
+				await this.saveOutbox({
 					schemaVersion: 2,
 					missionId: this.missionId,
 					id: `${this.missionId}:${candidate.id}`,
@@ -964,9 +1128,10 @@ class BulkSweepWorkflow {
 						requestHash,
 						{ signal: this.abortController?.signal }
 					);
-					candidate.status = response.status === 'complete' ? 'submitted' : 'needs_review';
+					const candidateState =
+						response.status === 'complete' ? 'submitted' : 'attachments_partial';
 					hasPartial ||= response.status !== 'complete';
-					await bulkMissionDb.saveOutbox({
+					await this.saveOutbox({
 						schemaVersion: 2,
 						missionId: this.missionId,
 						id: `${this.missionId}:${candidate.id}`,
@@ -997,11 +1162,31 @@ class BulkSweepWorkflow {
 						stepState: response.status === 'complete' ? 'complete' : 'partial',
 						attemptCount: 1,
 					});
+					this._candidates = this._candidates.map((entry) =>
+						entry.id === candidate.id
+							? {
+									...entry,
+									status: candidateState,
+									createdHomeboxItemId: response.homeboxItemId ?? null,
+									payloadSnapshot: deepDeproxy(payload),
+								}
+							: entry
+					);
+					await this.persistCandidateRecords();
 				} catch (error) {
 					hasPartial = true;
-					candidate.status = 'needs_review';
+					this._candidates = this._candidates.map((entry) =>
+						entry.id === candidate.id
+							? {
+									...entry,
+									status: 'failed',
+									createdHomeboxItemId: null,
+									payloadSnapshot: deepDeproxy(payload),
+								}
+							: entry
+					);
 					this._error = `Submission for ${candidate.name} failed; other candidates continued.`;
-					await bulkMissionDb.saveOutbox({
+					await this.saveOutbox({
 						schemaVersion: 2,
 						missionId: this.missionId,
 						id: `${this.missionId}:${candidate.id}`,
@@ -1023,6 +1208,7 @@ class BulkSweepWorkflow {
 						stepState: 'failed',
 						attemptCount: 1,
 					});
+					await this.persistCandidateRecords();
 				}
 				this._submissionProgress = {
 					current: i + 1,
@@ -1031,7 +1217,15 @@ class BulkSweepWorkflow {
 				};
 			}
 			this._status = hasPartial ? 'reviewing' : 'complete';
-			await this.persistMission();
+			if (hasPartial) {
+				await this.persistMission();
+			} else {
+				// Keep the completed candidates recoverable after a forced reload.
+				// The explicit completion route remains the local success surface.
+				this._status = 'reviewing';
+				await this.persistMission();
+				this._status = 'complete';
+			}
 			if (!hasPartial) goto(resolve('/bulk-complete'));
 			return !hasPartial;
 		} catch (error) {
@@ -1045,6 +1239,7 @@ class BulkSweepWorkflow {
 	}
 
 	reset(): void {
+		this.invalidateQueuedWrites();
 		for (const photo of this._photos) safeRevoke(photo.previewUrl);
 		this._status = 'idle';
 		this._locationId = null;
@@ -1060,11 +1255,15 @@ class BulkSweepWorkflow {
 		this._audioSegments = [];
 		this._transcriptSpans = [];
 		this._rawTranscriptText = '';
+		this._canonicalTranscriptText = '';
 		this._interimTranscriptText = '';
 		this._editedTranscriptText = '';
 		this._transcriptEdited = false;
 		this._transcriptSource = 'none';
 		this._candidates = [];
+		this._outboxOperations = [];
+		this.initialMissionPersistence = null;
+		this.removingPhotoIds.clear();
 		this._analysisProgress = null;
 		this._submissionProgress = null;
 		this._error = null;
@@ -1072,39 +1271,86 @@ class BulkSweepWorkflow {
 		this._stats = null;
 	}
 
-	private async persistMission(): Promise<void> {
-		if (!this._locationId) return;
-		try {
-			await bulkMissionDb.saveMission({
-				schemaVersion: 2,
-				id: this.missionId,
-				status: this._status,
-				locationId: this._locationId,
-				parentItemId: this._parentItemId,
-				parentItemName: this._parentItemName,
-				locationName: this._locationName ?? '',
-				areaLabel: this._areaLabel ?? '',
-				locationPath: this._locationPath ?? this._locationName ?? '',
-				createdAtMs: this._createdAtMs ?? Date.now(),
-				startedAtMs: this._startedAtMs ?? Date.now(),
-				updatedAtMs: Date.now(),
-				photoIds: this._photos.map((photo) => photo.id),
-				audioSegmentIds: this._audioSegments.map((audio) => audio.id),
-				transcriptSpanIds: this._transcriptSpans.map((span) => span.id),
-				observationChunkIds: [],
-				candidateIds: this._candidates.map((candidate) => candidate.id),
-				outboxOperationIds: [],
-				chunkSize: 6,
-				lastError: this._error ? { code: 'WORKFLOW', message: this._error, retryable: true } : null,
-				rawTranscript: this._rawTranscriptText,
-				canonicalTranscript: this._rawTranscriptText,
-				editedTranscript: this._editedTranscriptText,
-				transcriptEdited: this._transcriptEdited,
-				transcriptSource: this._transcriptSource,
-			});
-		} catch (error) {
-			log.warn('Bulk mission persistence failed', error);
-		}
+	private buildMissionSnapshot(context: DurableWriteContext): BulkMissionRecord | null {
+		if (!this._locationId) return null;
+		return {
+			schemaVersion: 2,
+			id: context.missionId,
+			status: this._status,
+			locationId: this._locationId,
+			parentItemId: this._parentItemId,
+			parentItemName: this._parentItemName,
+			locationName: this._locationName ?? '',
+			areaLabel: this._areaLabel ?? '',
+			locationPath: this._locationPath ?? this._locationName ?? '',
+			createdAtMs: this._createdAtMs ?? Date.now(),
+			startedAtMs: this._startedAtMs ?? Date.now(),
+			updatedAtMs: Date.now(),
+			photoIds: this._photos.map((photo) => photo.id),
+			audioSegmentIds: this._audioSegments.map((audio) => audio.id),
+			transcriptSpanIds: this._transcriptSpans.map((span) => span.id),
+			observationChunkIds: [],
+			candidateIds: this._candidates.map((candidate) => candidate.id),
+			outboxOperationIds: this._outboxOperations.map((operation) => operation.id),
+			chunkSize: 6,
+			lastError: this._error ? { code: 'WORKFLOW', message: this._error, retryable: true } : null,
+			rawTranscript: this._rawTranscriptText,
+			canonicalTranscript: this._canonicalTranscriptText || this._rawTranscriptText,
+			editedTranscript: this._editedTranscriptText,
+			transcriptEdited: this._transcriptEdited,
+			transcriptSource: this._transcriptSource,
+			nextCaptureSequence: this._nextCaptureSequence,
+		};
+	}
+
+	private async persistMissionNow(
+		snapshot: BulkMissionRecord,
+		context: DurableWriteContext
+	): Promise<void> {
+		if (!this.isCurrentWriteContext(context)) return;
+		const durable = await bulkMissionDb.loadMissionBundle(snapshot.id);
+		if (!this.isCurrentWriteContext(context)) return;
+		const durableMission = durable?.mission;
+		const ids = (durableIds: string[] | undefined, localIds: string[]): string[] =>
+			durableMission ? [...(durableIds ?? [])] : [...localIds];
+		await bulkMissionDb.saveMission({
+			...snapshot,
+			createdAtMs: snapshot.createdAtMs ?? durableMission?.createdAtMs ?? Date.now(),
+			startedAtMs: snapshot.startedAtMs ?? durableMission?.startedAtMs ?? Date.now(),
+			updatedAtMs: Date.now(),
+			photoIds: ids(durableMission?.photoIds, snapshot.photoIds),
+			audioSegmentIds: ids(durableMission?.audioSegmentIds, snapshot.audioSegmentIds),
+			transcriptSpanIds: ids(durableMission?.transcriptSpanIds, snapshot.transcriptSpanIds),
+			observationChunkIds: ids(
+				durableMission?.observationChunkIds,
+				durable?.chunks.map((chunk) => chunk.id) ?? []
+			),
+			candidateIds: ids(
+				durableMission?.candidateIds,
+				durable?.candidates.map((candidate) => candidate.id) ?? snapshot.candidateIds
+			),
+			outboxOperationIds: ids(
+				durableMission?.outboxOperationIds,
+				durable?.outbox.map((operation) => operation.id) ?? snapshot.outboxOperationIds
+			),
+			chunkSize: durableMission?.chunkSize ?? snapshot.chunkSize,
+			lastError: this._error
+				? { code: 'WORKFLOW', message: this._error, retryable: true }
+				: (durableMission?.lastError ?? snapshot.lastError),
+			nextCaptureSequence: Math.max(
+				snapshot.nextCaptureSequence ?? 0,
+				durableMission?.nextCaptureSequence ?? 0
+			),
+		});
+	}
+
+	private persistMission(): Promise<void> {
+		const context = this.captureWriteContext();
+		const snapshot = this.buildMissionSnapshot(context);
+		if (!snapshot) return Promise.resolve();
+		return this.enqueueDurableWrite((queuedContext) =>
+			this.persistMissionNow(snapshot, queuedContext)
+		);
 	}
 }
 

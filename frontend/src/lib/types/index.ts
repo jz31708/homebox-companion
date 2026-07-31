@@ -1,3 +1,11 @@
+import type {
+	BulkCandidateRecord,
+	BulkDuplicateMatchRecord,
+	BulkDuplicateResolutionRecord,
+	BulkOutboxOperationRecord,
+	BulkStructuredError,
+} from './bulkDomain';
+
 /**
  * Consolidated type definitions for Homebox Companion
  *
@@ -217,8 +225,7 @@ export interface ScanState {
 
 export type BulkTranscriptSource = 'none' | 'live' | 'server' | 'manual' | 'mixed';
 export type BulkTranscriptStatus = 'pending' | 'transcribing' | 'done' | 'failed';
-export type BulkCandidateStatus =
-	'pending' | 'accepted' | 'submitted' | 'rejected' | 'needs_review';
+export type BulkCandidateStatus = BulkCandidateRecord['state'];
 
 export type BulkSweepStatus =
 	| 'idle'
@@ -249,6 +256,11 @@ export interface BulkAudioSegment {
 	transcript?: string;
 	rawTranscript?: string;
 	transcriptStatus: BulkTranscriptStatus;
+	status?: 'recording' | 'persisted' | 'transcribing' | 'done' | 'failed' | 'ignored';
+	source?: 'server' | 'live_preview' | 'manual';
+	error?: BulkStructuredError | null;
+	retryCount?: number;
+	byteSize?: number;
 }
 
 export interface BulkTranscriptSpan {
@@ -257,6 +269,10 @@ export interface BulkTranscriptSpan {
 	startMs?: number;
 	endMs?: number;
 	sourceAudioSegmentId?: string;
+	startOffsetMs?: number | null;
+	endOffsetMs?: number | null;
+	source?: 'server' | 'live_preview' | 'manual';
+	canonical?: boolean;
 }
 
 export interface BulkEvidenceRef {
@@ -270,13 +286,25 @@ export interface BulkEvidenceRef {
 export interface BulkCandidateItem extends ItemCore, ItemExtended {
 	id: string;
 	custom_fields?: Record<string, string> | null;
-	confidence: number;
+	/** Legacy display field; runtime mappers omit it when the server provides no finite value. */
+	confidence?: number;
 	status: BulkCandidateStatus;
 	evidence: BulkEvidenceRef[];
 	sourcePhotoIds: string[];
 	uncertaintyReasons: string[];
 	duplicateCandidateIds: string[];
 	duplicateExistingItemId?: string | null;
+	reviewTier?: 'ready' | 'attention' | 'blocked';
+	entityMode?: 'individual' | 'grouped' | 'kit';
+	quantityBasis?:
+		'explicit_count' | 'distinct_entities' | 'pack_size' | 'user_confirmed' | 'unknown';
+	sourceObservationIds?: string[];
+	evidenceTranscriptSpanIds?: string[];
+	blockerCodes?: string[];
+	warningCodes?: string[];
+	duplicateMatches?: BulkDuplicateMatchRecord[];
+	duplicateResolution?: BulkDuplicateResolutionRecord | null;
+	createdHomeboxItemId?: string | null;
 	suggestedAction: 'accept' | 'review' | 'reject' | 'merge';
 	originalFiles?: File[];
 	correctionHistory?: Array<{ atMs: number; fields: string[] }>;
@@ -310,11 +338,13 @@ export interface BulkSweepState {
 	audioSegments: BulkAudioSegment[];
 	transcriptSpans: BulkTranscriptSpan[];
 	rawTranscriptText: string;
+	canonicalTranscriptText: string;
 	interimTranscriptText: string;
 	editedTranscriptText: string;
 	transcriptEdited: boolean;
 	transcriptSource: BulkTranscriptSource;
 	candidates: BulkCandidateItem[];
+	outboxOperations: BulkOutboxOperationRecord[];
 	analysisProgress: Progress | null;
 	submissionProgress: Progress | null;
 	error: string | null;

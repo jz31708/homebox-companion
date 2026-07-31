@@ -73,3 +73,66 @@ post-open transaction guarded by migration metadata. Frontend checks, lint,
 production build, and the 9-test one-worker E2E suite passed. Candidate
 conversion completeness and the expanded failure-injection matrix remain
 open for senior review; Phase 1 remains in progress.
+
+## Phase 1 correction 4 evidence
+
+This correction closes the remaining lossless-persistence review findings
+without starting Phase 2:
+
+- mission creation is durable before the first evidence append and all queued
+  photo/transcript/candidate writes can be flushed before navigation or
+  analysis;
+- mission record ID lists remain authoritative under stale or concurrent
+  generic saves;
+- Svelte reactive values are converted to cloneable records before candidate
+  and outbox persistence;
+- successful and partial submissions preserve candidate identity, state,
+  Homebox item ID, payload snapshot, and attachment retry state across reload;
+- photo removal atomically sanitizes surviving chunk, candidate, outbox,
+  attachment-manifest, attachment-result, and nested payload references;
+- candidate conversion round-trips duplicate candidates and omits confidence
+  when no finite source value exists;
+- transcript save failures remain on capture with a visible retry message;
+- server-transcription failures keep the audio Blob, persist structured
+  retryable failure state, and expose retry guidance;
+- camera teardown invalidates pending startup and `toBlob` callbacks before
+  route navigation, and empty camera output is rejected;
+- queued writes are bound to their originating mission generation, so discard,
+  reset, and next-mission transitions cannot redirect stale writes;
+- delayed photo, MediaRecorder, and browser-transcript callbacks are bound to
+  their originating capture session and cannot mutate a later mission;
+- file-picker quota failures preserve prior evidence and retain the failed
+  selection behind an explicit retry action;
+- repaired migration lists are always committed and photo removal regenerates
+  the outbox request hash from the sanitized payload;
+- Playwright concurrency is bounded to four local workers and two CI workers
+  after the eight-worker run exposed setup pressure and a navigation race.
+
+Validation after the correction:
+
+- `npm run check`: 0 errors and 0 warnings;
+- `npm run lint`: passed;
+- focused Prettier check over every changed frontend source, E2E, support, and
+  configuration file: passed;
+- `npm run build`: passed;
+- `npm run e2e`: 45/45 mobile Chromium scenarios passed with the bounded
+  default worker configuration;
+- `npm run e2e -- --workers=1`: 45/45 passed;
+- the seven in-scope independent-review blocker scenarios passed 7/7, including
+  durable IndexedDB assertions;
+- the three final capture-lifecycle scenarios passed 3/3;
+- the late-camera-callback scenario passed 5/5 with four workers;
+- `git diff --check`: passed.
+
+The repository-wide `npm run format:check` still reports the pre-existing
+line-ending/style baseline outside this change, so formatting evidence is
+scoped to every changed file. Automated camera coverage uses mocked browser
+media plumbing and is not a physical-phone camera claim.
+
+Phase 1 remains `in_progress` in both ledgers pending independent senior
+approval. No Phase 2 implementation, deployment, runtime acceptance, or
+physical pilot has started.
+
+Reload interruption between a completed outbox write and candidate completion,
+submission retry controls, and failed-response mapping remain assigned to the
+Phase 5 submission-idempotency gate and were not implemented in this phase.
