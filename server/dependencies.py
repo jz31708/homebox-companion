@@ -284,6 +284,16 @@ def require_auth(token: Annotated[str, Depends(get_token)]) -> None:
     _ = token
 
 
+async def require_valid_homebox_token(
+    token: Annotated[str, Depends(get_token)],
+    client: Annotated[HomeboxClient, Depends(get_client)],
+) -> str:
+    """Validate the bearer token with Homebox before protected local work."""
+    if not await client.validate_token(token):
+        raise HTTPException(status_code=401, detail="Invalid or expired Homebox token")
+    return token
+
+
 def require_llm_configured() -> str:
     """
     FastAPI dependency to ensure LLM is configured.

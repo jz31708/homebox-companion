@@ -8,23 +8,55 @@ transcription provider behind the app.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Annotated
 
-import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from pydantic import BaseModel
 
 from homebox_companion.core.config import Settings, get_settings
-from server.dependencies import require_auth
+from server.dependencies import require_valid_homebox_token
+from server.services.transcription import (
+    TranscriptionProviderFactory,
+    TranscriptionProviderMalformedResponse,
+    TranscriptionProviderRejected,
+    TranscriptionProviderTimeout,
+    TranscriptionProviderUnavailable,
+    get_transcription_provider_factory,
+)
 
 router = APIRouter()
 
 
-@router.post("/transcribe")
+class TranscriptionResponse(BaseModel):
+    text: str
+    start_offset_ms: int | None = None
+    end_offset_ms: int | None = None
+
+
+def normalize_audio_media_type(content_type: str | None) -> str:
+    return (content_type or "").split(";", 1)[0].strip().lower()
+
+
+def sanitize_audio_filename(filename: str | None, media_type: str) -> str:
+    if not filename or not filename.strip() or "\x00" in filename:
+        raise HTTPException(status_code=400, detail="Audio upload is missing a valid filename")
+    extension = {
+        "audio/webm": ".webm", "audio/ogg": ".ogg", "audio/wav": ".wav",
+        "audio/x-wav": ".wav", "audio/mpeg": ".mp3", "audio/mp4": ".m4a", "audio/x-m4a": ".m4a",
+    }[media_type]
+    safe = Path(filename).name.strip()
+    stem = Path(safe).stem or "narration"
+    return f"{stem}{extension}"
+
+
+@router.post("/transcribe", response_model=TranscriptionResponse)
 async def transcribe_audio(
     audio: Annotated[UploadFile, File(...)],
-    _authenticated: Annotated[None, Depends(require_auth)],
+    _token: Annotated[str, Depends(require_valid_homebox_token)],
     config: Annotated[Settings, Depends(get_settings)],
-) -> dict[str, str]:
+    provider_factory: Annotated[TranscriptionProviderFactory, Depends(get_transcription_provider_factory)],
+) -> TranscriptionResponse:
     """Transcribe an uploaded audio segment.
 
     The first implemented Bulk Sweep path keeps transcription local in the
@@ -36,8 +68,8 @@ async def transcribe_audio(
     if not audio.filename:
         raise HTTPException(status_code=400, detail="Audio upload is missing a filename")
 
-    allowed_types = {"audio/webm", "audio/ogg", "audio/wav", "audio/mpeg", "audio/mp4", "audio/x-m4a"}
-    media_type = (audio.content_type or "").split(";", 1)[0].strip().lower()
+    allowed_types = {"audio/webm", "audio/ogg", "audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp4", "audio/x-m4a"}
+    media_type = normalize_audio_media_type(audio.content_type)
     if media_type not in allowed_types:
         raise HTTPException(status_code=415, detail="Unsupported audio MIME type")
     # Read one byte beyond the limit so an exactly-at-limit upload remains
@@ -47,29 +79,21 @@ async def transcribe_audio(
         raise HTTPException(status_code=400, detail="Audio upload is empty")
     if len(content) > config.max_upload_size_bytes:
         raise HTTPException(status_code=413, detail="Audio upload exceeds the configured size limit")
-    api_key = config.effective_transcription_api_key
-    if not api_key:
-        raise HTTPException(status_code=503, detail="Server audio transcription is not configured")
-
-    base = (config.transcription_api_base or "https://api.openai.com/v1").rstrip("/")
+    filename = sanitize_audio_filename(audio.filename, media_type)
     try:
-        async with httpx.AsyncClient(timeout=config.transcription_timeout) as client:
-            response = await client.post(
-                f"{base}/audio/transcriptions",
-                headers={"Authorization": f"Bearer {api_key}"},
-                files={"file": (audio.filename, content, media_type)},
-                data={"model": config.transcription_model, "response_format": "json"},
-            )
-    except (httpx.TimeoutException, httpx.RequestError) as error:
-        raise HTTPException(status_code=503, detail="Transcription provider unavailable") from error
-    if response.status_code >= 400:
-        raise HTTPException(status_code=502, detail="Transcription provider rejected the audio")
-    try:
-        payload = response.json()
-        text = payload.get("text") if isinstance(payload, dict) else None
+        provider = provider_factory(config)
     except ValueError as error:
-        raise HTTPException(status_code=502, detail="Transcription provider returned malformed JSON") from error
-    if not isinstance(text, str) or not text.strip():
-        raise HTTPException(status_code=502, detail="Transcription provider returned no transcript")
-
-    return {"text": text.strip()}
+        raise HTTPException(status_code=503, detail="Server audio transcription is not configured") from error
+    try:
+        result = await provider.transcribe(filename=filename, content=content, media_type=media_type)
+    except TranscriptionProviderTimeout as error:
+        raise HTTPException(status_code=503, detail="Transcription provider timed out") from error
+    except TranscriptionProviderUnavailable as error:
+        raise HTTPException(status_code=503, detail="Transcription provider unavailable") from error
+    except (TranscriptionProviderRejected, TranscriptionProviderMalformedResponse) as error:
+        raise HTTPException(status_code=502, detail="Transcription provider returned an invalid response") from error
+    return TranscriptionResponse(
+        text=result.text,
+        start_offset_ms=result.start_offset_ms,
+        end_offset_ms=result.end_offset_ms,
+    )

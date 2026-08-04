@@ -21,6 +21,7 @@ Environment Variables:
         (falls back to HBC_LLM_API_KEY)
     HBC_TRANSCRIPTION_API_BASE: Optional transcription provider base URL
     HBC_TRANSCRIPTION_MODEL: Transcription model identifier (default: whisper-1)
+    HBC_TRANSCRIPTION_TIMEOUT: Provider timeout in seconds (default: 120; valid 1-600)
     HBC_SERVER_HOST: Host to bind the web server to (default: 0.0.0.0)
     HBC_SERVER_PORT: Port for the web server (default: 8000). In production,
         this single port serves both the API and the static frontend.
@@ -193,6 +194,14 @@ class Settings(BaseSettings):
     def effective_transcription_api_key(self) -> str:
         """Explicit transcription key, falling back to the configured LLM key."""
         return (self.transcription_api_key or self.effective_llm_api_key).strip()
+
+    @computed_field
+    @property
+    def effective_transcription_api_base(self) -> str:
+        """Explicit transcription base, LLM base, or the OpenAI default."""
+        explicit = (self.transcription_api_base or "").strip()
+        inherited = (self.llm_api_base or "").strip()
+        return (explicit or inherited or "https://api.openai.com/v1").rstrip("/")
 
     @computed_field
     @property

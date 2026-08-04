@@ -20,15 +20,25 @@ import type {
 	BulkEvidenceRef,
 } from '../types';
 
+
+export interface TranscriptionResponse {
+	text: string;
+	start_offset_ms: number | null;
+	end_offset_ms: number | null;
+}
+
 export async function transcribeAudio(
 	audio: Blob,
-	filename = 'narration.webm'
-): Promise<{ text: string }> {
+	filename = 'narration.webm',
+	options: { signal?: AbortSignal } = {}
+): Promise<TranscriptionResponse> {
+	if (audio.size === 0) throw new Error('Cannot transcribe an empty recording');
 	const form = new FormData();
 	form.append('audio', audio, filename);
-	return requestFormData<{ text: string }>('/tools/audio/transcribe', form, {
+	return requestFormData<TranscriptionResponse>('/tools/audio/transcribe', form, {
 		timeout: 120_000,
 		errorMessage: 'Server transcription failed',
+		signal: options.signal,
 	});
 }
 
