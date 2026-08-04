@@ -144,6 +144,22 @@ transcription canonical while retaining browser preview as optional, and
 persist retryable audio/transcript state. Later phases remain untouched pending
 a new independent senior PASS.
 
+## Phase 2 implementation evidence
+
+The first Phase 2 correction keeps the authenticated transcription route and
+explicit transcription settings, then fixes two provider-boundary defects:
+
+- upload reads at most `max_upload_size_bytes + 1`, distinguishing an exact
+  limit from an oversized upload and rejecting the latter before provider use;
+- blank provider transcript text is rejected as malformed instead of returning
+  a successful empty transcript.
+
+Targeted validation: `uv run pytest tests/test_audio_transcription.py -q`
+passed 6/6; `uv run ruff check server/api/tools/audio.py
+tests/test_audio_transcription.py` passed; `git diff --check` passed. Full
+Phase 2 validation and independent review are still pending. No deployment,
+merge, Phase 3 work, or physical pilot has started.
+
 Reload interruption between a completed outbox write and candidate completion,
 submission retry controls, and failed-response mapping remain assigned to the
 Phase 5 submission-idempotency gate and were not implemented in this phase.

@@ -39,10 +39,12 @@ async def transcribe_audio(
     allowed_types = {"audio/webm", "audio/ogg", "audio/wav", "audio/mpeg", "audio/mp4", "audio/x-m4a"}
     if audio.content_type not in allowed_types:
         raise HTTPException(status_code=415, detail="Unsupported audio MIME type")
-    content = await audio.read(config.max_upload_size_bytes)
+    # Read one byte beyond the limit so an exactly-at-limit upload remains
+    # valid while an oversized upload can be rejected before provider use.
+    content = await audio.read(config.max_upload_size_bytes + 1)
     if not content:
         raise HTTPException(status_code=400, detail="Audio upload is empty")
-    if len(content) >= config.max_upload_size_bytes:
+    if len(content) > config.max_upload_size_bytes:
         raise HTTPException(status_code=413, detail="Audio upload exceeds the configured size limit")
     api_key = config.effective_transcription_api_key
     if not api_key:
@@ -66,7 +68,7 @@ async def transcribe_audio(
         text = payload.get("text") if isinstance(payload, dict) else None
     except ValueError as error:
         raise HTTPException(status_code=502, detail="Transcription provider returned malformed JSON") from error
-    if not isinstance(text, str):
+    if not isinstance(text, str) or not text.strip():
         raise HTTPException(status_code=502, detail="Transcription provider returned no transcript")
 
     return {"text": text.strip()}
