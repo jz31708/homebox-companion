@@ -278,7 +278,7 @@
 			const segment = [...workflow.state.audioSegments]
 				.reverse()
 				.find((candidate) => !existingAudioIds.has(candidate.id));
-			if (segment && !session.hasSuccessfulFinalSpeech) {
+			if (segment) {
 				await workflow.transcribeAudioSegment(segment.id);
 			}
 		} catch (error) {

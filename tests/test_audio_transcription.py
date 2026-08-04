@@ -54,7 +54,7 @@ def test_transcription_accepts_exactly_at_configured_limit() -> None:
         response = TestClient(app).post(
             "/audio/transcribe",
             headers={"Authorization": "Bearer test-token"},
-            files={"audio": ("note.webm", b"a" * (1024 * 1024), "audio/webm")},
+            files={"audio": ("note.webm", b"a" * (1024 * 1024), "audio/webm;codecs=opus")},
         )
     assert response.status_code == 200
     assert response.json() == {"text": "kettle"}

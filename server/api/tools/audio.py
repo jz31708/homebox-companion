@@ -37,7 +37,8 @@ async def transcribe_audio(
         raise HTTPException(status_code=400, detail="Audio upload is missing a filename")
 
     allowed_types = {"audio/webm", "audio/ogg", "audio/wav", "audio/mpeg", "audio/mp4", "audio/x-m4a"}
-    if audio.content_type not in allowed_types:
+    media_type = (audio.content_type or "").split(";", 1)[0].strip().lower()
+    if media_type not in allowed_types:
         raise HTTPException(status_code=415, detail="Unsupported audio MIME type")
     # Read one byte beyond the limit so an exactly-at-limit upload remains
     # valid while an oversized upload can be rejected before provider use.
@@ -56,7 +57,7 @@ async def transcribe_audio(
             response = await client.post(
                 f"{base}/audio/transcriptions",
                 headers={"Authorization": f"Bearer {api_key}"},
-                files={"file": (audio.filename, content, audio.content_type)},
+                files={"file": (audio.filename, content, media_type)},
                 data={"model": config.transcription_model, "response_format": "json"},
             )
     except (httpx.TimeoutException, httpx.RequestError) as error:

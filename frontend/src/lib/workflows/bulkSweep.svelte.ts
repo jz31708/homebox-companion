@@ -188,7 +188,7 @@ class BulkSweepWorkflow {
 						}
 					: entry
 			);
-			await this.appendLiveTranscript(text, true, 'server', context.missionId);
+			await this.appendLiveTranscript(text, true, 'server', context.missionId, segmentId);
 			if (!this.isCurrentWriteContext(context)) return;
 			const completedSegment = {
 				...segment,
@@ -594,7 +594,8 @@ class BulkSweepWorkflow {
 		mimeType: string,
 		startedAtMs: number,
 		endedAtMs: number,
-		expectedMissionId?: string
+		expectedMissionId?: string,
+		sourceAudioSegmentId?: string
 	): Promise<void> {
 		if (expectedMissionId && expectedMissionId !== this.missionId) return Promise.resolve();
 		const context = this.captureWriteContext();
@@ -621,7 +622,8 @@ class BulkSweepWorkflow {
 		text: string,
 		final = false,
 		source: 'server' | 'live_preview' | 'manual' = 'live_preview',
-		expectedMissionId?: string
+		expectedMissionId?: string,
+		sourceAudioSegmentId?: string
 	): Promise<void> {
 		if (expectedMissionId && expectedMissionId !== this.missionId) return Promise.resolve();
 		if (!text.trim()) return Promise.resolve();
@@ -642,14 +644,17 @@ class BulkSweepWorkflow {
 				this._canonicalTranscriptText = this._rawTranscriptText;
 			}
 			this._interimTranscriptText = '';
+			const sourceSegment = sourceAudioSegmentId
+				? this._audioSegments.find((entry) => entry.id === sourceAudioSegmentId)
+				: undefined;
 			const span: BulkTranscriptSpan = {
 				id: createId('t'),
 				text,
-				startMs: 0,
-				endMs: undefined,
-				startOffsetMs: 0,
-				endOffsetMs: null,
-				sourceAudioSegmentId: this._audioSegments.at(-1)?.id,
+				startMs: sourceSegment?.startedAtMs,
+				endMs: sourceSegment?.endedAtMs,
+				startOffsetMs: sourceSegment?.startedAtMs ?? 0,
+				endOffsetMs: sourceSegment?.endedAtMs ?? null,
+				sourceAudioSegmentId: sourceAudioSegmentId ?? sourceSegment?.id,
 				source,
 				canonical: !this._transcriptEdited,
 			};

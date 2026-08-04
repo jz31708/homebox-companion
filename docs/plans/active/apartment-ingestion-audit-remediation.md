@@ -146,19 +146,26 @@ a new independent senior PASS.
 
 ## Phase 2 implementation evidence
 
-The first Phase 2 correction keeps the authenticated transcription route and
-explicit transcription settings, then fixes two provider-boundary defects:
+The Phase 2 correction keeps the authenticated transcription route and explicit
+transcription settings, then fixes these provider and capture-boundary defects:
 
 - upload reads at most `max_upload_size_bytes + 1`, distinguishing an exact
   limit from an oversized upload and rejecting the latter before provider use;
 - blank provider transcript text is rejected as malformed instead of returning
   a successful empty transcript.
+- browser SpeechRecognition no longer suppresses server transcription after a
+  recording is durably saved;
+- server transcript spans are bound to the explicit audio segment being
+  transcribed and use that segment's mission-relative offsets;
+- parameterized recorder MIME values are normalized before allowlist checks and
+  provider upload.
 
 Targeted validation: `uv run pytest tests/test_audio_transcription.py -q`
 passed 6/6; `uv run ruff check server/api/tools/audio.py
-tests/test_audio_transcription.py` passed; `git diff --check` passed. Full
-Phase 2 validation and independent review are still pending. No deployment,
-merge, Phase 3 work, or physical pilot has started.
+tests/test_audio_transcription.py` passed; frontend `npm run check` passed with
+0 errors and 0 warnings; `git diff --check` passed. Full Phase 2 validation
+and independent review are still pending. No deployment, merge, Phase 3 work,
+or physical pilot has started.
 
 Reload interruption between a completed outbox write and candidate completion,
 submission retry controls, and failed-response mapping remain assigned to the
