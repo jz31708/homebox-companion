@@ -1,9 +1,9 @@
 # Homebox Companion audit remediation
 
-Status: Phase 1 in progress; senior review requested.
+Status: Phase 2 in progress; Phase 1 independently approved.
 
 `PHASE_STATE.yaml` is canonical. `audit-remediation/REMEDIATION_STATE.yaml`
-must mirror its phase statuses. The committed `audit-remediation/` directory
+must mirror its phase statuses exactly. The committed `audit-remediation/` directory
 is durable source; ZIP files are historical provenance only. Phase 0 is
 complete. Phases 2–7 are changes-requested and not being implemented in this
 pass. Phase 8 remains blocked. No runtime acceptance or physical pilot is
@@ -129,9 +129,20 @@ line-ending/style baseline outside this change, so formatting evidence is
 scoped to every changed file. Automated camera coverage uses mocked browser
 media plumbing and is not a physical-phone camera claim.
 
-Phase 1 remains `in_progress` in both ledgers pending independent senior
-approval. No Phase 2 implementation, deployment, runtime acceptance, or
-physical pilot has started.
+Phase 1 independent senior review result: PASS at
+`46f5b723b43be7f34e5d6e3e9a12c4b8105f35df`; no blocking findings. The review
+reserves repository-wide independent validation for Phase 6 and real-phone
+validation for Phase 8. Phase 1 is complete in both ledgers and Phase 2 is now
+the only active implementation phase. No deployment, runtime acceptance,
+merge, or physical pilot is claimed.
+
+## Phase 2 handoff
+
+Phase 2 covers narration security and runtime only. It must preserve Medicine
+and Classic Capture, keep transcription authenticated, make server
+transcription canonical while retaining browser preview as optional, and
+persist retryable audio/transcript state. Later phases remain untouched pending
+a new independent senior PASS.
 
 Reload interruption between a completed outbox write and candidate completion,
 submission retry controls, and failed-response mapping remain assigned to the

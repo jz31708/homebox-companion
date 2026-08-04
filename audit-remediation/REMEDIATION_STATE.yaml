@@ -24,12 +24,12 @@ phases:
     prompt: codex/01_BRANCH_TRUTH_AND_CONTAINMENT.md
   - id: 1
     name: camera-context-and-lossless-persistence
-    status: in_progress
+    status: complete
     prompt: codex/02_CAMERA_CONTEXT_PERSISTENCE.md
     evidence: frontend/src/lib/components/BulkCameraCapture.svelte, frontend/src/lib/services/bulkMissionDb.ts, frontend/src/lib/workflows/bulkSweep.svelte.ts, frontend/e2e/bulk-persistence.spec.ts
   - id: 2
     name: narration-security-and-runtime
-    status: changes_requested
+    status: in_progress
     prompt: codex/03_NARRATION_SECURITY_RUNTIME.md
     evidence: server/api/tools/audio.py, src/homebox_companion/core/config.py, frontend/src/lib/api/vision.ts, frontend/src/lib/workflows/bulkSweep.svelte.ts, tests/test_audio_transcription.py
   - id: 3
