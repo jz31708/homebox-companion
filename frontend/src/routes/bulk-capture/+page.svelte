@@ -265,22 +265,16 @@
 				type: session.recorder.mimeType || 'audio/webm',
 			});
 			if (blob.size === 0) return;
-			const existingAudioIds = new Set(workflow.state.audioSegments.map((segment) => segment.id));
 			const startedAt = workflow.state.startedAtMs ?? session.recordingStartedAt;
 			const endedAt = session.recordingStoppedAt ?? Date.now();
-			await workflow.addAudioSegment(
+			const segmentId = await workflow.addAudioSegment(
 				blob,
 				blob.type || 'audio/webm',
 				session.recordingStartedAt - startedAt,
 				endedAt - startedAt
 			);
 			if (!isCurrentNarration(session)) return;
-			const segment = [...workflow.state.audioSegments]
-				.reverse()
-				.find((candidate) => !existingAudioIds.has(candidate.id));
-			if (segment) {
-				await workflow.transcribeAudioSegment(segment.id);
-			}
+			if (segmentId) await workflow.transcribeAudioSegment(segmentId);
 		} catch (error) {
 			reportTranscriptFailure(session, error);
 		} finally {

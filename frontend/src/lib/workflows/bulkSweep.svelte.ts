@@ -243,6 +243,12 @@ class BulkSweepWorkflow {
 		}
 	}
 
+	async retryAudioTranscription(segmentId: string): Promise<void> {
+		const segment = this._audioSegments.find((entry) => entry.id === segmentId);
+		if (!segment || segment.status === 'transcribing') return;
+		await this.transcribeAudioSegment(segmentId);
+	}
+
 	setParentItem(id: string | null, name: string | null): void {
 		this._parentItemId = id;
 		this._parentItemName = name;
@@ -589,15 +595,14 @@ class BulkSweepWorkflow {
 		}
 	}
 
-	addAudioSegment(
+	async addAudioSegment(
 		blob: Blob,
 		mimeType: string,
 		startedAtMs: number,
 		endedAtMs: number,
-		expectedMissionId?: string,
-		sourceAudioSegmentId?: string
-	): Promise<void> {
-		if (expectedMissionId && expectedMissionId !== this.missionId) return Promise.resolve();
+		expectedMissionId?: string
+	): Promise<string> {
+		if (expectedMissionId && expectedMissionId !== this.missionId) return Promise.resolve('');
 		const context = this.captureWriteContext();
 		const segment: BulkAudioSegment = {
 			id: createId('a'),
@@ -609,13 +614,14 @@ class BulkSweepWorkflow {
 			status: 'persisted',
 			rawTranscript: '',
 		};
-		if (!this.isCurrentWriteContext(context)) return Promise.resolve();
+		if (!this.isCurrentWriteContext(context)) return Promise.resolve('');
 		this._audioSegments = [...this._audioSegments, segment];
 		const missionSnapshot = this.buildMissionSnapshot(context);
-		return this.enqueueDurableWrite(async (queuedContext) => {
+		await this.enqueueDurableWrite(async (queuedContext) => {
 			await bulkMissionDb.addOrUpdateAudio(toAudioRecord(segment, queuedContext.missionId));
 			if (missionSnapshot) await this.persistMissionNow(missionSnapshot, queuedContext);
 		});
+		return segment.id;
 	}
 
 	appendLiveTranscript(
