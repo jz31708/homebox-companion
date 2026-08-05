@@ -1,8 +1,7 @@
 import { vision } from '$lib/api';
 import * as bulkMissionDb from '$lib/services/bulkMissionDb';
-import { fromAudioRecord, fromTranscriptSpanRecord } from '$lib/services/bulkRecordMappers';
-import type { BulkMissionRecord, BulkStructuredError } from '$lib/types/bulkDomain';
-import type { BulkAudioSegment, BulkTranscriptSpan } from '$lib/types';
+import type { BulkAudioSegment } from '$lib/types';
+import type { BulkStructuredError } from '$lib/types/bulkDomain';
 import { workflowLogger as log } from '$lib/utils/logger';
 import {
 	bulkSweepWorkflow as baseWorkflow,
@@ -11,15 +10,6 @@ import {
 
 export type { BulkMissionIdentity } from './bulkSweepBase.svelte';
 
-type RuntimeInternals = {
-	_audioSegments: BulkAudioSegment[];
-	_transcriptSpans: BulkTranscriptSpan[];
-	_interimTranscriptText: string;
-	_error: string | null;
-	applyCommittedMissionTranscript(mission: BulkMissionRecord): void;
-};
-
-const runtime = baseWorkflow as unknown as RuntimeInternals;
 const transcriptionPromises = new Map<string, Promise<void>>();
 const transcriptionControllers = new Map<string, AbortController>();
 
@@ -92,7 +82,7 @@ function safeTranscriptionError(error: unknown): BulkStructuredError {
 }
 
 function serverSpanOffsets(
-	segment: BulkAudioSegment,
+	segment: Pick<BulkAudioSegment, 'startedAtMs' | 'endedAtMs'>,
 	response: { start_offset_ms?: number | null; end_offset_ms?: number | null }
 ): { startOffsetMs: number; endOffsetMs: number } {
 	const start = segment.startedAtMs;
@@ -116,11 +106,9 @@ function serverSpanOffsets(
 	return { startOffsetMs: start + boundedStart, endOffsetMs: start + boundedEnd };
 }
 
-function replaceAudio(record: Parameters<typeof fromAudioRecord>[0]): void {
-	const converted = fromAudioRecord(record);
-	runtime._audioSegments = runtime._audioSegments.map((entry) =>
-		entry.id === converted.id ? converted : entry
-	);
+async function resynchronizeCurrentMission(identity: BulkMissionIdentity): Promise<void> {
+	if (!currentIdentity(identity)) return;
+	await baseWorkflow.recover();
 }
 
 async function persistAttemptFailure(
@@ -136,18 +124,16 @@ async function persistAttemptFailure(
 			currentAttemptId,
 			error
 		);
-		if (!failure.committed || !failure.audio || !failure.mission || !currentIdentity(identity)) {
-			return;
+		if (failure.committed && currentIdentity(identity)) {
+			await resynchronizeCurrentMission(identity);
 		}
-		replaceAudio(failure.audio);
-		runtime._error = error.message;
 	} catch {
 		log.error(`Bulk transcription persistence failed safely (${error.code})`);
 	}
 }
 
 async function runAudioTranscription(segmentId: string): Promise<void> {
-	const initial = runtime._audioSegments.find((entry) => entry.id === segmentId);
+	const initial = baseWorkflow.state.audioSegments.find((entry) => entry.id === segmentId);
 	if (!initial || (initial.status !== 'persisted' && initial.status !== 'failed')) return;
 
 	const identity = baseWorkflow.getMissionIdentity();
@@ -161,7 +147,6 @@ async function runAudioTranscription(segmentId: string): Promise<void> {
 			currentAttemptId,
 			Date.now()
 		);
-		replaceAudio(attempt.record);
 		if (!attempt.acquired) return;
 
 		if (!currentIdentity(identity)) {
@@ -200,27 +185,10 @@ async function runAudioTranscription(segmentId: string): Promise<void> {
 			segmentId,
 			attemptId: currentAttemptId,
 			text,
-			...serverSpanOffsets(fromAudioRecord(attempt.record), result),
+			...serverSpanOffsets(attempt.record, result),
 		});
-		if (
-			!committed.committed ||
-			!committed.audio ||
-			!committed.span ||
-			!committed.mission ||
-			!currentIdentity(identity)
-		) {
-			return;
-		}
-
-		replaceAudio(committed.audio);
-		const span = fromTranscriptSpanRecord(committed.span);
-		runtime._transcriptSpans = [
-			...runtime._transcriptSpans.filter((entry) => entry.id !== span.id),
-			span,
-		];
-		runtime.applyCommittedMissionTranscript(committed.mission);
-		runtime._interimTranscriptText = '';
-		runtime._error = null;
+		if (!committed.committed || !currentIdentity(identity)) return;
+		await resynchronizeCurrentMission(identity);
 	} catch (error) {
 		const structured = safeTranscriptionError(error);
 		await persistAttemptFailure(identity, segmentId, currentAttemptId, structured);
@@ -245,7 +213,7 @@ baseWorkflow.transcribeAudioSegment = (segmentId: string): Promise<void> => {
 };
 
 baseWorkflow.retryAudioTranscription = async (segmentId: string): Promise<void> => {
-	const segment = runtime._audioSegments.find((entry) => entry.id === segmentId);
+	const segment = baseWorkflow.state.audioSegments.find((entry) => entry.id === segmentId);
 	if (!segment || segment.status !== 'failed') return;
 	await baseWorkflow.transcribeAudioSegment(segmentId);
 };
