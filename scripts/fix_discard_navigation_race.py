@@ -1,5 +1,6 @@
 from pathlib import Path
 
+# One-shot source correction; the workflow and this script are removed after validation.
 path = Path("frontend/src/routes/bulk-capture/+page.svelte")
 text = path.read_text()
 
