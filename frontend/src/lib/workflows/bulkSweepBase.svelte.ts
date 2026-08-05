@@ -475,6 +475,7 @@ class BulkSweepWorkflow {
 
 	async discardPersistedMission(): Promise<void> {
 		const missionId = this.missionId;
+		bulkMissionDb.markMissionDiscarded(missionId);
 		this.invalidateQueuedWrites();
 		await this.durableWriteQueue;
 		await bulkMissionDb.discardMission(missionId);
@@ -488,6 +489,7 @@ class BulkSweepWorkflow {
 		const parentId = this._parentItemId;
 		const parentName = this._parentItemName;
 		const missionId = this.missionId;
+		bulkMissionDb.markMissionDiscarded(missionId);
 		this.invalidateQueuedWrites();
 		await this.durableWriteQueue;
 		await bulkMissionDb.discardMission(missionId);
@@ -501,6 +503,7 @@ class BulkSweepWorkflow {
 
 	async finishLocation(): Promise<void> {
 		const missionId = this.missionId;
+		bulkMissionDb.markMissionDiscarded(missionId);
 		this.invalidateQueuedWrites();
 		await this.durableWriteQueue;
 		await bulkMissionDb.discardMission(missionId);

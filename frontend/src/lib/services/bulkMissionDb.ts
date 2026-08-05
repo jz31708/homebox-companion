@@ -14,6 +14,7 @@ import type {
 const DB_NAME = 'hbc-bulk-missions';
 const DB_VERSION = 2;
 const MISSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const DISCARD_MARKER_PREFIX = 'hbc-bulk-discarded:';
 const STORES = [
 	'missions',
 	'photos',
@@ -40,6 +41,53 @@ let migrationPromise: Promise<void> | null = null;
 
 function requireBrowser(): void {
 	if (!browser) throw new Error('Bulk mission storage is only available in the browser');
+}
+
+function discardMarkerKey(missionId: string): string {
+	return `${DISCARD_MARKER_PREFIX}${missionId}`;
+}
+
+export function markMissionDiscarded(missionId: string): void {
+	requireBrowser();
+	try {
+		localStorage.setItem(discardMarkerKey(missionId), String(Date.now()));
+	} catch {
+		// IndexedDB deletion still runs when storage policy blocks localStorage.
+	}
+}
+
+function isMissionDiscarded(missionId: string): boolean {
+	if (!browser) return false;
+	try {
+		return localStorage.getItem(discardMarkerKey(missionId)) !== null;
+	} catch {
+		return false;
+	}
+}
+
+function discardedMissionIds(now = Date.now()): string[] {
+	if (!browser) return [];
+	const ids: string[] = [];
+	try {
+		for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+			const marker = localStorage.key(index);
+			if (!marker?.startsWith(DISCARD_MARKER_PREFIX)) continue;
+			const missionId = marker.slice(DISCARD_MARKER_PREFIX.length);
+			const markedAt = Number(localStorage.getItem(marker) ?? now);
+			if (!missionId) {
+				localStorage.removeItem(marker);
+				continue;
+			}
+			if (Number.isFinite(markedAt) && now - markedAt > MISSION_TTL_MS) {
+				localStorage.removeItem(marker);
+				continue;
+			}
+			ids.push(missionId);
+		}
+	} catch {
+		return ids;
+	}
+	return ids;
 }
 
 function getDb(): Promise<IDBPDatabase> {
@@ -540,7 +588,9 @@ async function saveMissionScopedRecord<T extends { missionId: string; id: string
 	record: T,
 	missionListField: Exclude<MissionListField, 'photoIds'>
 ): Promise<void> {
+	if (isMissionDiscarded(record.missionId)) return;
 	await serializedWrite(async () => {
+		if (isMissionDiscarded(record.missionId)) return;
 		const db = await getDb();
 		const tx = db.transaction([storeName, 'missions'], 'readwrite');
 		try {
@@ -565,7 +615,9 @@ async function saveMissionScopedRecord<T extends { missionId: string; id: string
 }
 
 export async function saveMission(mission: BulkMissionRecord): Promise<void> {
+	if (isMissionDiscarded(mission.id)) return;
 	await serializedWrite(async () => {
+		if (isMissionDiscarded(mission.id)) return;
 		const db = await getDb();
 		const tx = db.transaction('missions', 'readwrite');
 		const current = (await tx.objectStore('missions').get(mission.id)) as
@@ -1143,7 +1195,7 @@ export async function loadActiveMission(): Promise<BulkMissionRecord | null> {
 	const missions = (await db.getAll('missions')) as BulkMissionRecord[];
 	return (
 		missions
-			.filter((mission) => mission.status !== 'complete')
+			.filter((mission) => mission.status !== 'complete' && !isMissionDiscarded(mission.id))
 			.sort((a, b) => (b as any).updatedAtMs - (a as any).updatedAtMs)[0] ?? null
 	);
 }
@@ -1152,7 +1204,9 @@ export async function listRecoverableMissions(): Promise<BulkMissionRecord[]> {
 	requireBrowser();
 	const db = await getDb();
 	const missions = (await db.getAll('missions')) as BulkMissionRecord[];
-	return missions.filter((mission) => mission.status !== 'complete');
+	return missions.filter(
+		(mission) => mission.status !== 'complete' && !isMissionDiscarded(mission.id)
+	);
 }
 
 export async function storageEstimate(): Promise<StorageEstimate | null> {
@@ -1178,6 +1232,7 @@ async function missionRecords<T>(store: StoreName, missionId: string): Promise<T
 
 export async function loadMissionBundle(missionId: string): Promise<BulkMissionBundle | null> {
 	requireBrowser();
+	if (isMissionDiscarded(missionId)) return null;
 	const db = await getDb();
 	const mission = (await db.get('missions', missionId)) as BulkMissionRecord | undefined;
 	if (!mission) return null;
@@ -1193,6 +1248,7 @@ export async function loadMissionBundle(missionId: string): Promise<BulkMissionB
 }
 
 export async function discardMission(missionId: string): Promise<void> {
+	markMissionDiscarded(missionId);
 	await serializedWrite(async () => {
 		const db = await getDb();
 		const tx = db.transaction([...STORES], 'readwrite');
@@ -1217,6 +1273,7 @@ export async function discardMission(missionId: string): Promise<void> {
 }
 
 export async function cleanupStaleMissions(now = Date.now()): Promise<void> {
+	for (const missionId of discardedMissionIds(now)) await discardMission(missionId);
 	const missions = await listRecoverableMissions();
 	for (const mission of missions) {
 		if (now - Number((mission as any).updatedAtMs ?? 0) > MISSION_TTL_MS)
@@ -1226,6 +1283,14 @@ export async function cleanupStaleMissions(now = Date.now()): Promise<void> {
 
 export async function resetDatabaseForTests(): Promise<void> {
 	if (!browser) return;
+	try {
+		for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+			const marker = localStorage.key(index);
+			if (marker?.startsWith(DISCARD_MARKER_PREFIX)) localStorage.removeItem(marker);
+		}
+	} catch {
+		// Test reset still deletes IndexedDB when localStorage is unavailable.
+	}
 	const pendingQueue = writeQueue;
 	try {
 		await pendingQueue;
