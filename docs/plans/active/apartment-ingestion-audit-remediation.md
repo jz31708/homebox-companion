@@ -1,172 +1,157 @@
 # Homebox Companion audit remediation
 
-Status: Phase 2 in progress; Phase 1 independently approved.
+Status: Phase 2 implementation candidate complete; independent senior review pending.
 
 `PHASE_STATE.yaml` is canonical. `audit-remediation/REMEDIATION_STATE.yaml`
-must mirror its phase statuses exactly. The committed `audit-remediation/` directory
-is durable source; ZIP files are historical provenance only. Phase 0 is
-complete. Phases 2–7 are changes-requested and not being implemented in this
-pass. Phase 8 remains blocked. No runtime acceptance or physical pilot is
+must mirror its phase statuses exactly. Phase 0 and Phase 1 are complete.
+Phase 2 remains `in_progress` until an independent senior review approves the
+final remote head. Phases 3–7 remain `changes_requested`. Phase 8 remains
+blocked. No deployment, merge, runtime acceptance, or physical pilot is
 claimed.
 
 ## Phase 0 record
 
-Phase 0 containment and branch-truth evidence remains in the committed
-`audit-remediation/runtime-containment-2026-07-15.md` and the earlier Phase 0
-commit history. Historical Bulk implementation commits remain historical,
-unreviewed context; they are not Phase 1 evidence.
+Phase 0 containment and branch-truth evidence remains in
+`audit-remediation/runtime-containment-2026-07-15.md` and the Phase 0 commit
+history.
 
-## Phase 1 implementation evidence
+## Phase 1 record
 
-This pass corrects only camera/context/lossless persistence behavior:
+Phase 1 was independently approved at
+`46f5b723b43be7f34e5d6e3e9a12c4b8105f35df`.
 
-- camera capture awaits the async persistence callback and disables the
-  shutter while that callback is committing;
-- the workflow publishes a captured photo only after its IndexedDB write
-  commits, revokes temporary URLs on failure, and preserves earlier photos;
-- multi-file additions use unique capture sequences;
-- selected location, optional parent, and free-form area label remain distinct;
-- target parent is centralized as `parentItemId ?? locationId`;
-- mission transcript text/source/timestamps and transcript spans are durable;
-- candidate replacement removes stale records and the old snapshot is no
-  longer an alternate recovery source;
-- photo removal invalidates dependent evidence and updates mission photo IDs;
-- v1 records receive schema-v2 defaults during IndexedDB upgrade.
+Its accepted scope includes:
 
-## Validation currently run
+- camera capture lifecycle and empty-output rejection;
+- atomic photo-plus-mission persistence and durable capture sequencing;
+- lossless location, parent, area, transcript, candidate, outbox, and Blob
+  round trips;
+- awaited schema migration preserving IndexedDB keys and Blob bytes;
+- rollback-safe photo edits/removals and exact candidate replacement;
+- mission-generation binding for queued and delayed callbacks;
+- discard cleanup and Phase 1 regression coverage.
 
-- `git fetch origin` and `git rev-list --left-right --count origin/main...HEAD`:
-  `0 26` before this correction commit;
-- frontend svelte-check: 0 errors;
-- frontend ESLint: 0 errors;
-- frontend production build: passed;
-- existing mobile Bulk persistence E2E: 7/7 passed;
-- changed-file Prettier check: passed after formatting.
+The managed Phase 1 gate later passed 38/38:
 
-The required persistence-failure, migration, candidate-replacement, and
-location-fallback cases still require explicit senior-review confirmation or
-additional test coverage before Phase 1 can be marked complete.
+- `frontend/e2e/auth-bootstrap.spec.ts`: 2/2;
+- `frontend/e2e/phase1-persistence-regressions.spec.ts`: 36/36.
 
-## Prohibited in this pass
+## Phase 2 scope
 
-No narration, observe/fuse, review redesign, submission remediation,
-deployment, runtime acceptance, or physical pilot work is being started.
-
-## Phase 1 correction 2 evidence
-
-The follow-up correction adds one transactional photo-plus-mission append
-operation, a durable non-reused capture sequence, awaited photo removal,
-lossless transcript/candidate persistence, mission ID-list updates, and
-transactional candidate replacement. Camera persistence failures revoke only
-the failed batch URLs and leave prior evidence intact. Frontend validation
-passed with 0 svelte-check errors, 0 ESLint errors, a successful production
-build, and the existing Bulk E2E file passed 7/7. Phase 1 remains in progress
-pending senior review of the explicit failure/migration round-trip matrix.
-
-## Phase 1 correction 3 evidence
-
-Photo append now allocates capture sequences from the durable mission inside
-the transaction and preserves all existing mission lists. Photo edits preserve
-their stored sequence, removal updates dependent mission lists atomically,
-camera empty outputs are retryable errors, and v1 migration runs as a durable
-post-open transaction guarded by migration metadata. Frontend checks, lint,
-production build, and the 9-test one-worker E2E suite passed. Candidate
-conversion completeness and the expanded failure-injection matrix remain
-open for senior review; Phase 1 remains in progress.
-
-## Phase 1 correction 4 evidence
-
-This correction closes the remaining lossless-persistence review findings
-without starting Phase 2:
-
-- mission creation is durable before the first evidence append and all queued
-  photo/transcript/candidate writes can be flushed before navigation or
-  analysis;
-- mission record ID lists remain authoritative under stale or concurrent
-  generic saves;
-- Svelte reactive values are converted to cloneable records before candidate
-  and outbox persistence;
-- successful and partial submissions preserve candidate identity, state,
-  Homebox item ID, payload snapshot, and attachment retry state across reload;
-- photo removal atomically sanitizes surviving chunk, candidate, outbox,
-  attachment-manifest, attachment-result, and nested payload references;
-- candidate conversion round-trips duplicate candidates and omits confidence
-  when no finite source value exists;
-- transcript save failures remain on capture with a visible retry message;
-- server-transcription failures keep the audio Blob, persist structured
-  retryable failure state, and expose retry guidance;
-- camera teardown invalidates pending startup and `toBlob` callbacks before
-  route navigation, and empty camera output is rejected;
-- queued writes are bound to their originating mission generation, so discard,
-  reset, and next-mission transitions cannot redirect stale writes;
-- delayed photo, MediaRecorder, and browser-transcript callbacks are bound to
-  their originating capture session and cannot mutate a later mission;
-- file-picker quota failures preserve prior evidence and retain the failed
-  selection behind an explicit retry action;
-- repaired migration lists are always committed and photo removal regenerates
-  the outbox request hash from the sanitized payload;
-- Playwright concurrency is bounded to four local workers and two CI workers
-  after the eight-worker run exposed setup pressure and a navigation race.
-
-Validation after the correction:
-
-- `npm run check`: 0 errors and 0 warnings;
-- `npm run lint`: passed;
-- focused Prettier check over every changed frontend source, E2E, support, and
-  configuration file: passed;
-- `npm run build`: passed;
-- `npm run e2e`: 45/45 mobile Chromium scenarios passed with the bounded
-  default worker configuration;
-- `npm run e2e -- --workers=1`: 45/45 passed;
-- the seven in-scope independent-review blocker scenarios passed 7/7, including
-  durable IndexedDB assertions;
-- the three final capture-lifecycle scenarios passed 3/3;
-- the late-camera-callback scenario passed 5/5 with four workers;
-- `git diff --check`: passed.
-
-The repository-wide `npm run format:check` still reports the pre-existing
-line-ending/style baseline outside this change, so formatting evidence is
-scoped to every changed file. Automated camera coverage uses mocked browser
-media plumbing and is not a physical-phone camera claim.
-
-Phase 1 independent senior review result: PASS at
-`46f5b723b43be7f34e5d6e3e9a12c4b8105f35df`; no blocking findings. The review
-reserves repository-wide independent validation for Phase 6 and real-phone
-validation for Phase 8. Phase 1 is complete in both ledgers and Phase 2 is now
-the only active implementation phase. No deployment, runtime acceptance,
-merge, or physical pilot is claimed.
-
-## Phase 2 handoff
-
-Phase 2 covers narration security and runtime only. It must preserve Medicine
-and Classic Capture, keep transcription authenticated, make server
-transcription canonical while retaining browser preview as optional, and
-persist retryable audio/transcript state. Later phases remain untouched pending
-a new independent senior PASS.
+Phase 2 covers narration security and runtime only. It preserves Classic
+Capture, Medicine Intake, Medicine Catalog, all approved Phase 1 behavior, and
+the later-phase boundaries.
 
 ## Phase 2 implementation evidence
 
-The Phase 2 correction keeps the authenticated transcription route and explicit
-transcription settings, then fixes these provider and capture-boundary defects:
+### Authentication and provider boundary
 
-- upload reads at most `max_upload_size_bytes + 1`, distinguishing an exact
-  limit from an oversized upload and rejecting the latter before provider use;
-- blank provider transcript text is rejected as malformed instead of returning
-  a successful empty transcript.
-- browser SpeechRecognition no longer suppresses server transcription after a
-  recording is durably saved;
-- server transcript spans are bound to the explicit audio segment being
-  transcribed and use that segment's mission-relative offsets;
-- parameterized recorder MIME values are normalized before allowlist checks and
-  provider upload.
+- `POST /api/tools/audio/transcribe` uses a validated Homebox bearer-token
+  dependency before provider construction or invocation.
+- Missing, malformed, invalid, and expired credentials cannot reach the
+  provider.
+- Homebox validation outages return a safe service-unavailable response.
+- Filename, MIME, empty-content, exact-limit, oversized, and unreadable upload
+  cases are handled before provider construction.
+- Parameterized recorder MIME types such as `audio/webm;codecs=opus` are
+  normalized to the trusted base media type.
+- Provider timeout, network, HTTP rejection, malformed JSON, missing/non-string
+  text, blank text, and invalid offset payloads map to bounded safe errors.
+- Provider response bodies, keys, tokens, audio bytes, and transcript bodies are
+  excluded from normal logs and client-facing errors.
 
-Targeted validation: `uv run pytest tests/test_audio_transcription.py -q`
-passed 6/6; `uv run ruff check server/api/tools/audio.py
-tests/test_audio_transcription.py` passed; frontend `npm run check` passed with
-0 errors and 0 warnings; `git diff --check` passed. Full Phase 2 validation
-and independent review are still pending. No deployment, merge, Phase 3 work,
-or physical pilot has started.
+### Configuration contract
 
-Reload interruption between a completed outbox write and candidate completion,
-submission retry controls, and failed-response mapping remain assigned to the
-Phase 5 submission-idempotency gate and were not implemented in this phase.
+The maintained environment contract is documented in `.env.example`,
+`src/homebox_companion/core/config.py`, and `docs/audio-transcription.md`:
+
+- `HBC_TRANSCRIPTION_API_KEY` falls back to `HBC_LLM_API_KEY`, then legacy
+  `HBC_OPENAI_API_KEY`;
+- `HBC_TRANSCRIPTION_API_BASE` falls back to `HBC_LLM_API_BASE`, then
+  `https://api.openai.com/v1`;
+- `HBC_TRANSCRIPTION_MODEL` defaults to `whisper-1` and does not inherit
+  `HBC_LLM_MODEL`;
+- `HBC_TRANSCRIPTION_TIMEOUT` defaults to 120 seconds and is constrained to
+  1–600;
+- `HBC_MAX_UPLOAD_SIZE_MB` is the audio upload limit.
+
+No credential value is committed.
+
+### Durable audio and retry semantics
+
+- Every non-empty MediaRecorder Blob is committed with its mission reference
+  before the recording is published to UI or sent to the server.
+- Attempt acquisition is serialized in IndexedDB, increments `retryCount`
+  atomically, records one active attempt identity, and rejects duplicate or
+  non-retryable attempts without another provider call.
+- Successful completion atomically commits the audio state, deterministic
+  `server:<segment-id>` transcript span, and mission transcript.
+- Failure completion is bound to the active attempt and preserves Blob, segment
+  ID, MIME, byte size, timing, prior transcript, and retry count.
+- A `transcribing` record recovered after reload becomes a retryable
+  `TRANSCRIPTION_INTERRUPTED` failure without changing evidence identity.
+- Retry after reload reuses the same segment and Blob, advances the durable
+  retry count monotonically, clears the prior error on success, and does not
+  append duplicate spans.
+- Success and failure transaction failures roll back without publishing partial
+  canonical or failed state.
+
+### Canonical transcript and callback safety
+
+- Browser `SpeechRecognition` is optional preview only.
+- A successful browser final result does not create a durable canonical span
+  and does not suppress server transcription.
+- Server results are bound to the explicit audio segment rather than the newest
+  array entry.
+- Provider offsets are converted to mission-relative offsets and bounded to the
+  durable segment; missing or invalid offsets fall back to the complete segment
+  interval.
+- Active requests are cancelled on mission lifecycle transitions.
+- Mission ID plus write generation protect against late recorder, recognition,
+  and provider callbacks mutating a newer mission.
+- Typed notes remain usable when microphone access or server transcription is
+  unavailable.
+
+## Validation evidence
+
+GitHub Actions run `31015293699` checked out the final Phase 2 code candidate
+`90d02a113fdeb56859c7a8c64e4312ad65c74dca` after its patch job and completed
+successfully:
+
+Backend:
+
+- focused transcription suite: 40/40 passed;
+- focused Ruff validation: passed.
+
+Frontend:
+
+- `npm run check`: 0 errors and 0 warnings;
+- `npm run lint`: passed;
+- `npm run build`: passed;
+- `frontend/e2e/phase2-narration.spec.ts`: 15/15 passed with one managed worker.
+
+The 15 Phase 2 browser scenarios cover:
+
+- durable-before-UI/provider ordering;
+- no-SpeechRecognition canonical server flow and reload;
+- successful and failed browser-recognition behavior;
+- durable provider failure and visible retry;
+- retry after reload and duplicate-click deduplication;
+- interrupted-attempt repair;
+- exact older-segment binding;
+- provider-offset conversion and fallback/clamping;
+- success and failure transaction rollback;
+- mission-A callback isolation from mission B;
+- typed-note fallback with denied microphone access.
+
+A read-only final validation workflow now runs repository-wide Ruff, `ty`, the
+focused and complete backend suites, frontend checks/build, the Phase 1 gates,
+the Phase 2 narration gate, and the complete managed serial E2E suite. The
+workflow contains no source-patching or branch-write behavior.
+
+## Current gate
+
+Phase 2 remains `in_progress` pending independent senior review of the final
+remote head. Do not begin Phase 3, deploy, merge, or perform the physical pilot
+until that review explicitly passes and the two ledgers are transitioned in a
+separate bounded commit.
