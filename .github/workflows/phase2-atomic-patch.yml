@@ -1,0 +1,261 @@
+name: Apply Phase 2 atomicity corrections
+
+on:
+  push:
+    branches:
+      - fix/final-apartment-ingestion-audit
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[phase2-atomic-patched]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/final-apartment-ingestion-audit
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Apply bounded source corrections
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_function(path: str, start: str, end: str, replacement: str) -> None:
+              file = Path(path)
+              text = file.read_text()
+              left = text.index(start)
+              right = text.index(end, left)
+              file.write_text(text[:left] + replacement + text[right:])
+
+          db_path = 'frontend/src/lib/services/bulkMissionDb.ts'
+          replace_function(
+              db_path,
+              'export async function beginAudioTranscriptionAttempt(',
+              '\nexport async function commitAudioTranscriptionFailure(',
+              '''export async function beginAudioTranscriptionAttempt(
+          missionId: string,
+          segmentId: string,
+          attemptId: string,
+          attemptStartedAtMs: number
+          ): Promise<BeginAudioTranscriptionAttemptResult> {
+          return serializedWrite(async () => {
+          const db = await getDb();
+          const tx = db.transaction(['missions', 'audio'], 'readwrite');
+          try {
+          const mission = (await tx.objectStore('missions').get(missionId)) as
+          BulkMissionRecord | undefined;
+          const audio = (await tx.objectStore('audio').get(key(missionId, segmentId))) as
+          BulkAudioRecord | undefined;
+          if (!mission || !audio || audio.missionId !== missionId)
+          throw new Error('Audio segment no longer belongs to this mission');
+          if (audio.status === 'transcribing' && audio.activeAttemptId) {
+          await tx.done;
+          return { acquired: false, reason: 'already_transcribing', record: audio };
+          }
+          if (audio.status !== 'persisted' && audio.status !== 'failed') {
+          await tx.done;
+          return { acquired: false, reason: 'not_retryable', record: audio };
+          }
+          const next: BulkAudioRecord = {
+          ...audio,
+          status: 'transcribing',
+          error: null,
+          retryCount: Math.max(0, audio.retryCount ?? 0) + 1,
+          activeAttemptId: attemptId,
+          activeAttemptStartedAtMs: attemptStartedAtMs,
+          };
+          await tx.objectStore('audio').put(next, key(missionId, segmentId));
+          mission.updatedAtMs = Date.now();
+          await tx.objectStore('missions').put(mission, missionId);
+          await tx.done;
+          return { acquired: true, record: next };
+          } catch (error) {
+          abortTransactionAndThrow(tx, error);
+          }
+          });
+          }
+          '''
+          )
+          replace_function(
+              db_path,
+              'export async function commitAudioTranscriptionFailure(',
+              '\nexport function serverTranscriptSpanId(',
+              '''export async function commitAudioTranscriptionFailure(
+          missionId: string,
+          segmentId: string,
+          attemptId: string,
+          error: BulkStructuredError
+          ): Promise<{
+          committed: boolean;
+          audio: BulkAudioRecord | null;
+          mission: BulkMissionRecord | null;
+          }> {
+          return serializedWrite(async () => {
+          const db = await getDb();
+          const tx = db.transaction(['missions', 'audio'], 'readwrite');
+          try {
+          const mission = (await tx.objectStore('missions').get(missionId)) as
+          BulkMissionRecord | undefined;
+          const audio = (await tx.objectStore('audio').get(key(missionId, segmentId))) as
+          BulkAudioRecord | undefined;
+          if (
+          !mission ||
+          !audio ||
+          audio.status !== 'transcribing' ||
+          audio.activeAttemptId !== attemptId
+          ) {
+          await tx.done;
+          return { committed: false, audio: null, mission: null };
+          }
+          const next: BulkAudioRecord = {
+          ...audio,
+          status: 'failed',
+          error,
+          activeAttemptId: null,
+          activeAttemptStartedAtMs: null,
+          };
+          await tx.objectStore('audio').put(next, key(missionId, segmentId));
+          mission.lastError = error;
+          mission.updatedAtMs = Date.now();
+          await tx.objectStore('missions').put(mission, missionId);
+          await tx.done;
+          return { committed: true, audio: next, mission };
+          } catch (error) {
+          abortTransactionAndThrow(tx, error);
+          }
+          });
+          }
+          '''
+          )
+          replace_function(
+              db_path,
+              'export async function commitAudioTranscriptionSuccess(',
+              '\nexport async function saveSpan(',
+              '''export async function commitAudioTranscriptionSuccess(
+          input: CommitAudioTranscriptionSuccessInput
+          ): Promise<CommitAudioTranscriptionSuccessResult> {
+          return serializedWrite(async () => {
+          const db = await getDb();
+          const tx = db.transaction(['missions', 'audio', 'spans'], 'readwrite');
+          try {
+          const mission = (await tx.objectStore('missions').get(input.missionId)) as
+          BulkMissionRecord | undefined;
+          const audio = (await tx.objectStore('audio').get(key(input.missionId, input.segmentId))) as
+          BulkAudioRecord | undefined;
+          const text = input.text.trim();
+          if (
+          !mission ||
+          !audio ||
+          audio.status !== 'transcribing' ||
+          audio.activeAttemptId !== input.attemptId ||
+          !text ||
+          input.startOffsetMs < audio.startedAtMs ||
+          input.endOffsetMs < input.startOffsetMs ||
+          input.endOffsetMs > audio.endedAtMs
+          ) {
+          await tx.done;
+          return { committed: false, audio: null, span: null, mission: null };
+          }
+          const span: BulkTranscriptSpanRecord = {
+          schemaVersion: DB_VERSION,
+          missionId: input.missionId,
+          id: serverTranscriptSpanId(input.segmentId),
+          sourceAudioSegmentId: input.segmentId,
+          text,
+          startOffsetMs: input.startOffsetMs,
+          endOffsetMs: input.endOffsetMs,
+          source: 'server',
+          canonical: true,
+          };
+          await tx.objectStore('spans').put(span, key(input.missionId, span.id));
+          const nextAudio: BulkAudioRecord = {
+          ...audio,
+          status: 'done',
+          transcript: text,
+          rawTranscript: text,
+          source: 'server',
+          error: null,
+          activeAttemptId: null,
+          activeAttemptStartedAtMs: null,
+          };
+          await tx.objectStore('audio').put(nextAudio, key(input.missionId, input.segmentId));
+          const spans = (await tx.objectStore('spans').getAll()) as BulkTranscriptSpanRecord[];
+          const canonical = spans
+          .filter(
+          (entry) =>
+          entry.missionId === input.missionId && entry.canonical && entry.source === 'server'
+          )
+          .sort(
+          (a, b) =>
+          (a.startOffsetMs ?? Number.MAX_SAFE_INTEGER) -
+          (b.startOffsetMs ?? Number.MAX_SAFE_INTEGER) ||
+          (a.sourceAudioSegmentId ?? '').localeCompare(b.sourceAudioSegmentId ?? '') ||
+          a.id.localeCompare(b.id)
+          )
+          .map((entry) => entry.text.trim())
+          .filter(Boolean)
+          .join(' ');
+          mission.rawTranscript = canonical;
+          mission.canonicalTranscript = canonical;
+          if (!mission.transcriptEdited) mission.editedTranscript = canonical;
+          mission.transcriptSource = mission.transcriptEdited ? 'mixed' : 'server';
+          mission.transcriptSpanIds = uniqueIds([...(mission.transcriptSpanIds ?? []), span.id]);
+          mission.audioSegmentIds = uniqueIds([...(mission.audioSegmentIds ?? []), input.segmentId]);
+          if (mission.lastError?.code?.startsWith('TRANSCRIPTION_')) mission.lastError = null;
+          mission.updatedAtMs = Date.now();
+          await tx.objectStore('missions').put(mission, input.missionId);
+          await tx.done;
+          return { committed: true, audio: nextAudio, span, mission };
+          } catch (error) {
+          abortTransactionAndThrow(tx, error);
+          }
+          });
+          }
+          '''
+          )
+
+          support = Path('frontend/e2e/support/phase2Narration.ts')
+          support_text = support.read_text()
+          support_text = support_text.replace(
+              "failureKind === 'failure-mission-put' &&\n\t\t\t\t\t\tthis.name === 'missions' &&\n\t\t\t\t\t\t\trecord.lastError?.code?.startsWith('TRANSCRIPTION_')",
+              "failureKind === 'failure-mission-put' &&\n\t\t\t\t\t\tthis.name === 'audio' &&\n\t\t\t\t\t\t\trecord.status === 'failed'"
+          )
+          support.write_text(support_text)
+
+          spec = Path('frontend/e2e/phase2-narration.spec.ts')
+          spec_text = spec.read_text().replace(
+              "page.getByText(/Microphone unavailable/i)",
+              "page.getByText('Microphone unavailable. You can type notes instead.', { exact: true })"
+          )
+          spec.write_text(spec_text)
+
+          base = Path('frontend/src/lib/workflows/bulkSweepBase.svelte.ts')
+          base_text = base.read_text()
+          base_text = base_text.replace(
+              "log.error('Bulk transcription failure could not be persisted', persistenceError);",
+              "void persistenceError;\n\t\t\t\tlog.error('Bulk transcription failure could not be persisted safely');"
+          ).replace(
+              "log.warn('Bulk server transcription unavailable; audio remains persisted', error);",
+              "void error;\n\t\t\tlog.warn('Bulk server transcription unavailable; audio remains persisted safely');"
+          )
+          base.write_text(base_text)
+      - name: Format changed frontend files
+        working-directory: frontend
+        run: |
+          npm install --no-audit --no-fund
+          npx prettier --write src/lib/services/bulkMissionDb.ts src/lib/workflows/bulkSweepBase.svelte.ts e2e/support/phase2Narration.ts e2e/phase2-narration.spec.ts
+      - name: Commit bounded correction
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/src/lib/services/bulkMissionDb.ts frontend/src/lib/workflows/bulkSweepBase.svelte.ts frontend/e2e/support/phase2Narration.ts frontend/e2e/phase2-narration.spec.ts
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "fix: enforce atomic narration completion [phase2-atomic-patched]"
+          git push origin HEAD:fix/final-apartment-ingestion-audit
