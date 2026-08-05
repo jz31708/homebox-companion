@@ -5,7 +5,7 @@ Status: Phase 2 implementation candidate complete; independent senior review pen
 `PHASE_STATE.yaml` is canonical. `audit-remediation/REMEDIATION_STATE.yaml`
 must mirror its phase statuses exactly. Phase 0 and Phase 1 are complete.
 Phase 2 remains `in_progress` until an independent senior review approves the
-final remote head. Phases 3–7 remain `changes_requested`. Phase 8 remains
+current branch head. Phases 3–7 remain `changes_requested`. Phase 8 remains
 blocked. No deployment, merge, runtime acceptance, or physical pilot is
 claimed.
 
@@ -36,10 +36,10 @@ The final managed Phase 1 gate passes 38/38:
 - `frontend/e2e/auth-bootstrap.spec.ts`: 2/2;
 - `frontend/e2e/phase1-persistence-regressions.spec.ts`: 36/36.
 
-The discard lifecycle now also uses a synchronous mission tombstone before the
-first asynchronous deletion step. Generic mission/scoped writes and recovery
-ignore tombstoned missions, preventing a queued write or immediate navigation
-from resurrecting discarded work. The corresponding Phase 1 regression passes.
+The discard lifecycle uses a synchronous mission tombstone before the first
+asynchronous deletion step. Generic mission/scoped writes and recovery ignore
+tombstoned missions, preventing a queued write or immediate navigation from
+resurrecting discarded work. The corresponding Phase 1 regression passes.
 
 ## Phase 2 scope
 
@@ -119,17 +119,17 @@ No credential value is committed.
 
 ## Final validation evidence
 
-Final remote head:
+Phase 2 implementation head:
 `1a96bf5b002de4e30963440499ba0828c9d1e6b8`.
 
-GitHub Actions run `31019147387` executed the read-only validation workflow
-against PR merge commit `40d3a91178f0b4a78bb2906ceb69e8326e31840a`, which contains that branch head.
-Both jobs completed successfully.
+GitHub Actions run `31019811241` executed the complete read-only validation
+workflow against documentation head `ea0811ca65014acfefdbad170c5b9270fcbe93fb`,
+which contains the implementation head. Both jobs completed successfully.
 
 Backend:
 
 - `uv run ruff check .`: passed;
-- `uv run ty check src server tests`: green, with 17 warning diagnostics in
+- `uv run ty check src server tests`: green, with warning diagnostics in
   existing non-blocking typing areas;
 - focused transcription tests: 40/40 passed;
 - complete selected backend suite: 267 passed, 35 deselected, 1 dependency
@@ -169,7 +169,8 @@ scripts used during diagnosis have been removed.
 
 ## Current gate
 
-Phase 2 remains `in_progress` pending independent senior review of
-`1a96bf5b002de4e30963440499ba0828c9d1e6b8`. Do not begin Phase 3, deploy,
-merge, or perform the physical pilot until that review explicitly passes and
-the two ledgers are transitioned in a separate bounded commit.
+Phase 2 remains `in_progress` pending independent senior review of the current
+branch head, including its documentation-only descendants of the validated
+implementation. Do not begin Phase 3, deploy, merge, or perform the physical
+pilot until that review explicitly passes and the two ledgers are transitioned
+in a separate bounded commit.
