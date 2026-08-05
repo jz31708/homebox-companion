@@ -1,15 +1,18 @@
+import re
 from pathlib import Path
 
 support = Path("frontend/e2e/support/phase2Narration.ts")
 support_text = support.read_text()
-old_failure = """failureKind === 'failure-mission-put' &&
-\t\t\t\t\t\tthis.name === 'missions' &&
-\t\t\t\t\t\t\trecord.lastError?.code?.startsWith('TRANSCRIPTION_')"""
-new_failure = """failureKind === 'failure-mission-put' &&
-\t\t\t\t\t\tthis.name === 'audio' &&
-\t\t\t\t\t\t\trecord.status === 'failed'"""
-if old_failure in support_text:
-    support.write_text(support_text.replace(old_failure, new_failure))
+support_text = support_text.replace(
+    "const record = value as { id?: string; lastError?: { code?: string } | null };",
+    "const record = value as { id?: string; status?: string; lastError?: { code?: string } | null };",
+)
+support_text = re.sub(
+    r"\(failureKind === 'failure-mission-put' &&\s*this\.name === 'missions' &&\s*record\.lastError\?\.code\?\.startsWith\('TRANSCRIPTION_'\)\)",
+    "(failureKind === 'failure-mission-put' &&\n\t\t\t\t\t\tthis.name === 'audio' &&\n\t\t\t\t\t\t\trecord.status === 'failed')",
+    support_text,
+)
+support.write_text(support_text)
 
 spec = Path("frontend/e2e/phase2-narration.spec.ts")
 spec_text = spec.read_text()
