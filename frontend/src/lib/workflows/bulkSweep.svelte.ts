@@ -3,6 +3,7 @@ import * as bulkMissionDb from '$lib/services/bulkMissionDb';
 import type { BulkAudioSegment } from '$lib/types';
 import type { BulkStructuredError } from '$lib/types/bulkDomain';
 import { workflowLogger as log } from '$lib/utils/logger';
+import { SvelteMap } from 'svelte/reactivity';
 import {
 	bulkSweepWorkflow as baseWorkflow,
 	type BulkMissionIdentity,
@@ -12,6 +13,27 @@ export type { BulkMissionIdentity } from './bulkSweepBase.svelte';
 
 const transcriptionPromises = new Map<string, Promise<void>>();
 const transcriptionControllers = new Map<string, AbortController>();
+const activeAudioOverlay = new SvelteMap<
+	string,
+	Pick<BulkAudioSegment, 'status' | 'retryCount' | 'activeAttemptId' | 'activeAttemptStartedAtMs'>
+>();
+
+const durableState = baseWorkflow.state;
+const narratedState = new Proxy(durableState, {
+	get(target, property: string | symbol) {
+		if (property === 'audioSegments') {
+			return target.audioSegments.map((segment) => {
+				const overlay = activeAudioOverlay.get(segment.id);
+				return overlay ? { ...segment, ...overlay } : segment;
+			});
+		}
+		return Reflect.get(target, property, target);
+	},
+});
+Object.defineProperty(baseWorkflow, 'state', {
+	configurable: true,
+	get: () => narratedState,
+});
 
 function currentIdentity(identity: BulkMissionIdentity): boolean {
 	const current = baseWorkflow.getMissionIdentity();
@@ -148,6 +170,12 @@ async function runAudioTranscription(segmentId: string): Promise<void> {
 			Date.now()
 		);
 		if (!attempt.acquired) return;
+		activeAudioOverlay.set(segmentId, {
+			status: attempt.record.status,
+			retryCount: attempt.record.retryCount,
+			activeAttemptId: attempt.record.activeAttemptId,
+			activeAttemptStartedAtMs: attempt.record.activeAttemptStartedAtMs,
+		});
 
 		if (!currentIdentity(identity)) {
 			await persistAttemptFailure(identity, segmentId, currentAttemptId, {
@@ -194,6 +222,7 @@ async function runAudioTranscription(segmentId: string): Promise<void> {
 		await persistAttemptFailure(identity, segmentId, currentAttemptId, structured);
 		log.warn(`Bulk transcription attempt ended safely (${structured.code})`);
 	} finally {
+		activeAudioOverlay.delete(segmentId);
 		if (controller && transcriptionControllers.get(segmentId) === controller) {
 			transcriptionControllers.delete(segmentId);
 		}
