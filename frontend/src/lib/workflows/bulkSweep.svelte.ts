@@ -40,6 +40,30 @@ function safeRevoke(url: string): void {
 	if (url.startsWith('blob:')) URL.revokeObjectURL(url);
 }
 
+function resolveServerSpanOffsets(
+	segment: BulkAudioSegment,
+	response: { start_offset_ms?: number | null; end_offset_ms?: number | null }
+): { startOffsetMs: number; endOffsetMs: number } {
+	const start = segment.startedAtMs;
+	const end = segment.endedAtMs;
+	const duration = Math.max(0, end - start);
+	const providerStart = response.start_offset_ms;
+	const providerEnd = response.end_offset_ms;
+	if (
+		typeof providerStart !== 'number' ||
+		!Number.isFinite(providerStart) ||
+		typeof providerEnd !== 'number' ||
+		!Number.isFinite(providerEnd) ||
+		providerStart < 0 ||
+		providerEnd < providerStart
+	)
+		return { startOffsetMs: start, endOffsetMs: end };
+	const boundedStart = Math.min(duration, providerStart);
+	const boundedEnd = Math.min(duration, providerEnd);
+	if (boundedEnd < boundedStart) return { startOffsetMs: start, endOffsetMs: end };
+	return { startOffsetMs: start + boundedStart, endOffsetMs: start + boundedEnd };
+}
+
 interface DurableWriteContext {
 	missionId: string;
 	generation: number;
@@ -264,11 +288,7 @@ class BulkSweepWorkflow {
 				segmentId,
 				attemptId,
 				text,
-				startOffsetMs: segment.startedAtMs + (result.start_offset_ms ?? 0),
-				endOffsetMs:
-					result.end_offset_ms == null
-						? segment.endedAtMs
-						: segment.startedAtMs + result.end_offset_ms,
+				...resolveServerSpanOffsets(segment, result),
 			});
 			if (
 				!committed.committed ||

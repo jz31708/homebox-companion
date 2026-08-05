@@ -606,7 +606,7 @@
 					{#if audioActionErrors[segment.id]}<p class="text-error-300 text-caption">
 							{audioActionErrors[segment.id]}
 						</p>{/if}
-					{#if segment.status === 'failed'}
+					{#if segment.status === 'failed' || segment.status === 'transcribing'}
 						<Button
 							variant="secondary"
 							disabled={retryingAudioIds.has(segment.id)}

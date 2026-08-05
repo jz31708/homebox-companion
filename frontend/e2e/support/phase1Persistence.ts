@@ -73,6 +73,10 @@ export async function installBulkApiMocks(page: Page): Promise<BulkApiMockTeleme
 			method: route.request().method(),
 			authorization: route.request().headers().authorization ?? null,
 		});
+		if (path === '/tools/audio/transcribe') {
+			await route.fallback();
+			return;
+		}
 		if (path === '/config') {
 			await route.fulfill({
 				json: {
