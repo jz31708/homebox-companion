@@ -35,6 +35,7 @@
 	let filePickerError = $state('');
 	let failedFilePickerFiles = $state<File[]>([]);
 	let retryingFilePicker = $state(false);
+	let discardingSweep = $state(false);
 	let photoRetryPatches = $state<
 		Record<string, Partial<{ note: string; groupLabel: string; ignored: boolean }>>
 	>({});
@@ -448,6 +449,17 @@
 		else if (workflow.state.error) showToast(workflow.state.error, 'error');
 	}
 
+	async function discardSweep(): Promise<void> {
+		if (discardingSweep) return;
+		discardingSweep = true;
+		try {
+			await workflow.discardPersistedMission();
+			await goto(resolve('/location'));
+		} finally {
+			discardingSweep = false;
+		}
+	}
+
 	async function retryTranscription(segmentId: string): Promise<void> {
 		if (retryingAudioIds.has(segmentId)) return;
 		retryingAudioIds.add(segmentId);
@@ -508,7 +520,7 @@
 		{/if}
 	</div>
 	{#if workflow.state.photos.length > 0}
-		<Button variant="secondary" full onclick={() => workflow.discardPersistedMission()}>
+		<Button variant="secondary" full disabled={discardingSweep} onclick={discardSweep}>
 			<span>Discard this sweep</span>
 		</Button>
 	{/if}
@@ -606,7 +618,7 @@
 					{#if audioActionErrors[segment.id]}<p class="text-error-300 text-caption">
 							{audioActionErrors[segment.id]}
 						</p>{/if}
-					{#if segment.status === 'failed' || segment.status === 'transcribing'}
+					{#if segment.status === 'failed'}
 						<Button
 							variant="secondary"
 							disabled={retryingAudioIds.has(segment.id)}
