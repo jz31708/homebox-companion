@@ -501,15 +501,15 @@ export async function installOneShotPhase2IdbFailure(
 		let fired = false;
 		const originalPut = IDBObjectStore.prototype.put;
 		IDBObjectStore.prototype.put = function (value: unknown, key?: IDBValidKey) {
-			const record = value as { id?: string; lastError?: { code?: string } | null };
+			const record = value as { id?: string; status?: string; lastError?: { code?: string } | null };
 			const fail =
 				!fired &&
 				((failureKind === 'success-span-put' &&
 					this.name === 'spans' &&
 					record.id?.startsWith('server:')) ||
 					(failureKind === 'failure-mission-put' &&
-						this.name === 'missions' &&
-						record.lastError?.code?.startsWith('TRANSCRIPTION_')));
+						this.name === 'audio' &&
+							record.status === 'failed'));
 			if (fail) {
 				fired = true;
 				throw new DOMException('Controlled Phase 2 IndexedDB failure', 'QuotaExceededError');
