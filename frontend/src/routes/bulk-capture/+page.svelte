@@ -23,6 +23,8 @@
 	let isRecording = $state(false);
 	let liveSupported = $state(false);
 	const removingPhotoIds = new SvelteSet<string>();
+	const retryingAudioIds = new SvelteSet<string>();
+	let audioActionErrors = $state<Record<string, string>>({});
 	let photoDrafts = $state<Record<string, { note: string; groupLabel: string; ignored: boolean }>>(
 		{}
 	);
@@ -447,7 +449,21 @@
 	}
 
 	async function retryTranscription(segmentId: string): Promise<void> {
-		await workflow.retryAudioTranscription(segmentId);
+		if (retryingAudioIds.has(segmentId)) return;
+		retryingAudioIds.add(segmentId);
+		try {
+			await workflow.retryAudioTranscription(segmentId);
+			const next = { ...audioActionErrors };
+			delete next[segmentId];
+			audioActionErrors = next;
+		} catch {
+			audioActionErrors = {
+				...audioActionErrors,
+				[segmentId]: 'Transcription retry failed. The recording remains saved.',
+			};
+		} finally {
+			retryingAudioIds.delete(segmentId);
+		}
 	}
 </script>
 
@@ -576,8 +592,27 @@
 								{segment.error.message}
 							</p>{/if}
 					</div>
+					<p class="text-caption text-neutral-400">
+						{segment.status === 'persisted'
+							? 'Saved, waiting for transcription'
+							: segment.status === 'transcribing'
+								? 'Transcribing'
+								: segment.status === 'done'
+									? 'Transcribed'
+									: segment.status === 'failed'
+										? 'Transcription failed'
+										: 'Ignored'}
+					</p>
+					{#if audioActionErrors[segment.id]}<p class="text-error-300 text-caption">
+							{audioActionErrors[segment.id]}
+						</p>{/if}
 					{#if segment.status === 'failed'}
-						<Button variant="secondary" onclick={() => void retryTranscription(segment.id)}>
+						<Button
+							variant="secondary"
+							disabled={retryingAudioIds.has(segment.id)}
+							ariaBusy={retryingAudioIds.has(segment.id)}
+							onclick={() => void retryTranscription(segment.id)}
+						>
 							Retry transcription
 						</Button>
 					{/if}
