@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import math
-
 import httpx
 import pytest
 from pydantic import ValidationError
@@ -251,17 +249,21 @@ async def test_provider_invalid_segments_container_is_rejected() -> None:
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
-    "segment",
+    "payload",
     [
-        {"start": -1, "end": 2},
-        {"start": 3, "end": 2},
-        {"start": math.inf, "end": 2},
-        {"start": 0, "end": math.nan},
+        b'{"text":"hello","segments":[{"start":-1,"end":2}]}',
+        b'{"text":"hello","segments":[{"start":3,"end":2}]}',
+        b'{"text":"hello","segments":[{"start":1e999,"end":2}]}',
+        b'{"text":"hello","segments":[{"start":0,"end":1e999}]}',
     ],
 )
-async def test_provider_invalid_numeric_offsets_are_rejected(segment: dict[str, float]) -> None:
+async def test_provider_invalid_numeric_offsets_are_rejected(payload: bytes) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"text": "hello", "segments": [segment]})
+        return httpx.Response(
+            200,
+            content=payload,
+            headers={"Content-Type": "application/json"},
+        )
 
     with pytest.raises(TranscriptionProviderMalformedResponse):
         await provider_with(handler).transcribe(
