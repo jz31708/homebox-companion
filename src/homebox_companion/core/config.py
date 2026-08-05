@@ -17,17 +17,20 @@ Environment Variables:
     HBC_LLM_ALLOW_UNSAFE_MODELS: If true, allow models not in the curated allowlist (best-effort)
     HBC_LLM_TIMEOUT: LLM request timeout in seconds (default: 120)
     HBC_LLM_STREAM_TIMEOUT: LLM streaming timeout in seconds (default: 300)
-    HBC_TRANSCRIPTION_API_KEY: Optional OpenAI-compatible transcription key
-        (falls back to HBC_LLM_API_KEY)
-    HBC_TRANSCRIPTION_API_BASE: Optional transcription provider base URL
-    HBC_TRANSCRIPTION_MODEL: Transcription model identifier (default: whisper-1)
+    HBC_TRANSCRIPTION_API_KEY: Optional OpenAI-compatible transcription key.
+        Falls back to HBC_LLM_API_KEY and then legacy HBC_OPENAI_API_KEY.
+    HBC_TRANSCRIPTION_API_BASE: Optional transcription provider base URL.
+        Falls back to HBC_LLM_API_BASE and then https://api.openai.com/v1.
+    HBC_TRANSCRIPTION_MODEL: Transcription model identifier (default: whisper-1).
+        This does not inherit HBC_LLM_MODEL.
     HBC_TRANSCRIPTION_TIMEOUT: Provider timeout in seconds (default: 120; valid 1-600)
     HBC_SERVER_HOST: Host to bind the web server to (default: 0.0.0.0)
     HBC_SERVER_PORT: Port for the web server (default: 8000). In production,
         this single port serves both the API and the static frontend.
     HBC_LOG_LEVEL: Logging level (default: INFO)
     HBC_DISABLE_UPDATE_CHECK: Set to true to disable GitHub update checks (default: false)
-    HBC_MAX_UPLOAD_SIZE_MB: Maximum file upload size in MB (default: 20)
+    HBC_MAX_UPLOAD_SIZE_MB: Maximum file upload size in MB (default: 20).
+        This limit also applies to audio transcription uploads.
     HBC_CORS_ORIGINS: Allowed CORS origins, comma-separated or "*" for all (default: "*")
     HBC_IMAGE_QUALITY: Image quality for Homebox uploads (default: medium).
         Options: raw (original), high (2560px, 85%), medium (1920px, 75%), low (1280px, 60%)
@@ -46,7 +49,7 @@ from __future__ import annotations
 from enum import StrEnum
 from functools import lru_cache
 
-from pydantic import computed_field
+from pydantic import Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Demo server for testing - users should replace with their own instance
@@ -99,10 +102,13 @@ class Settings(BaseSettings):
     llm_api_base: str | None = None
     llm_allow_unsafe_models: bool = False
 
+    # OpenAI-compatible audio transcription configuration. The provider may
+    # intentionally inherit the effective LLM key/base, but keeps its own model
+    # and timeout so speech behavior never depends on the vision/chat model.
     transcription_api_key: str = ""
     transcription_api_base: str | None = None
     transcription_model: str = "whisper-1"
-    transcription_timeout: int = 120
+    transcription_timeout: int = Field(default=120, ge=1, le=600)
 
     # Web server configuration
     server_host: str = "0.0.0.0"
@@ -164,6 +170,21 @@ class Settings(BaseSettings):
     # Label printing configuration
     print_enabled: bool = False  # Enable server-side label printing via Homebox labelmaker
 
+    @field_validator("transcription_api_key", "transcription_model", mode="before")
+    @classmethod
+    def strip_transcription_string(cls, value: object) -> str:
+        """Normalize dedicated transcription strings without exposing them."""
+        return "" if value is None else str(value).strip()
+
+    @field_validator("transcription_api_base", mode="before")
+    @classmethod
+    def strip_transcription_base(cls, value: object) -> str | None:
+        """Treat a blank dedicated base as absent so documented fallback applies."""
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
     @computed_field
     @property
     def api_url(self) -> str:
@@ -192,13 +213,13 @@ class Settings(BaseSettings):
     @computed_field
     @property
     def effective_transcription_api_key(self) -> str:
-        """Explicit transcription key, falling back to the configured LLM key."""
+        """Dedicated key, effective LLM key, legacy key, or empty when unconfigured."""
         return (self.transcription_api_key or self.effective_llm_api_key).strip()
 
     @computed_field
     @property
     def effective_transcription_api_base(self) -> str:
-        """Explicit transcription base, LLM base, or the OpenAI default."""
+        """Dedicated base, LLM base, or the OpenAI-compatible default."""
         explicit = (self.transcription_api_base or "").strip()
         inherited = (self.llm_api_base or "").strip()
         return (explicit or inherited or "https://api.openai.com/v1").rstrip("/")

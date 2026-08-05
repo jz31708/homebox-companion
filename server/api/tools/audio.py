@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from starlette.requests import ClientDisconnect
 
 from homebox_companion.core.config import Settings, get_settings
-from server.dependencies import require_valid_homebox_token
+from server.api.tools.audio_auth import require_valid_homebox_token
 from server.services.transcription import (
     TranscriptionProviderFactory,
     TranscriptionProviderMalformedResponse,
