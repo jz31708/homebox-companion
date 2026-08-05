@@ -24,6 +24,7 @@ from server.services.transcription import (
 
 @dataclass
 class RouteHarness:
+    app: FastAPI
     client: TestClient
     homebox: AsyncMock
     provider_factory: Mock
@@ -59,7 +60,7 @@ def make_harness(
     app.dependency_overrides[get_client] = lambda: homebox
     app.dependency_overrides[get_settings] = lambda: settings or Settings(max_upload_size_mb=1)
     app.dependency_overrides[get_transcription_provider_factory] = lambda: factory
-    return RouteHarness(TestClient(app), homebox, factory, transcribe)
+    return RouteHarness(app, TestClient(app), homebox, factory, transcribe)
 
 
 def auth_headers(value: str = "Bearer test-token") -> dict[str, str]:
@@ -135,7 +136,7 @@ def test_valid_homebox_token_allows_provider() -> None:
 
 def test_unconfigured_provider_returns_503_after_valid_auth() -> None:
     harness = make_harness(settings=Settings(transcription_api_key="", llm_api_key=""))
-    harness.client.app.dependency_overrides[get_transcription_provider_factory] = (
+    harness.app.dependency_overrides[get_transcription_provider_factory] = (
         lambda: build_transcription_provider
     )
     response = upload(harness)
