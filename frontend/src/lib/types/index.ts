@@ -261,6 +261,8 @@ export interface BulkAudioSegment {
 	error?: BulkStructuredError | null;
 	retryCount?: number;
 	byteSize?: number;
+	activeAttemptId?: string | null;
+	activeAttemptStartedAtMs?: number | null;
 }
 
 export interface BulkTranscriptSpan {

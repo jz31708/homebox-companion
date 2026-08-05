@@ -86,6 +86,8 @@ export interface BulkAudioRecord {
 	rawTranscript: string;
 	error: BulkStructuredError | null;
 	retryCount: number;
+	activeAttemptId?: string | null;
+	activeAttemptStartedAtMs?: number | null;
 }
 
 export interface BulkTranscriptSpanRecord {

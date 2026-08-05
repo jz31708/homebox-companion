@@ -110,6 +110,7 @@
 	onDestroy(() => {
 		routeActive = false;
 		stopNarration(true);
+		workflow.cancelActiveTranscriptions();
 	});
 
 	async function addFiles(files: FileList | File[] | null) {
@@ -155,6 +156,8 @@
 	}
 
 	async function startNarration() {
+		transcriptPersistenceError =
+			'Recording is saved locally; server transcription will preserve the canonical transcript.';
 		stopNarration(true);
 		const generation = ++narrationGeneration;
 		const missionIdentity = readWorkflowMissionIdentity();
@@ -224,7 +227,11 @@
 					const result = event.results[i];
 					const text = result[0]?.transcript ?? '';
 					const write = Promise.resolve().then(() =>
-						workflow.appendLiveTranscript(text, result.isFinal)
+						workflow.updateBrowserTranscriptPreview(
+							text,
+							Boolean(result.isFinal),
+							session.missionIdentity
+						)
 					);
 					const handledWrite = write.then(
 						() => {
@@ -575,7 +582,9 @@
 						<p class="text-caption text-neutral-400">
 							{segment.status} · attempt {segment.retryCount ?? 0}
 						</p>
-						{#if segment.error}<p class="text-caption text-error-300">{segment.error.message}</p>{/if}
+						{#if segment.error}<p class="text-error-300 text-caption">
+								{segment.error.message}
+							</p>{/if}
 					</div>
 					{#if segment.status === 'failed'}
 						<Button variant="secondary" onclick={() => void retryTranscription(segment.id)}>

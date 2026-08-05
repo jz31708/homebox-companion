@@ -288,6 +288,13 @@ function normalizeRecord(
 			record.rawTranscript = stringValue(record.rawTranscript, stringValue(record.transcript, ''));
 			record.error ??= null;
 			record.retryCount = Math.max(0, numberValue(record.retryCount, 0));
+			record.activeAttemptId =
+				typeof record.activeAttemptId === 'string' ? record.activeAttemptId : null;
+			record.activeAttemptStartedAtMs =
+				typeof record.activeAttemptStartedAtMs === 'number' &&
+				Number.isFinite(record.activeAttemptStartedAtMs)
+					? record.activeAttemptStartedAtMs
+					: null;
 			record.source ??= 'server';
 			break;
 		}
@@ -762,42 +769,236 @@ export async function addOrUpdateAudio(audio: BulkAudioRecord): Promise<void> {
 	await saveMissionScopedRecord('audio', audio, 'audioSegmentIds');
 }
 
-export async function beginAudioTranscriptionAttempt(
+export async function insertAudioSegment(
 	missionId: string,
-	segmentId: string,
-	expectedRetryCount: number
+	record: BulkAudioRecord
 ): Promise<BulkAudioRecord> {
 	return serializedWrite(async () => {
 		const db = await getDb();
 		const tx = db.transaction(['missions', 'audio'], 'readwrite');
-		const mission = (await tx.objectStore('missions').get(missionId)) as BulkMissionRecord | undefined;
-		const audio = (await tx.objectStore('audio').get(key(missionId, segmentId))) as BulkAudioRecord | undefined;
-		if (!mission || !audio || audio.missionId !== missionId) throw new Error('Audio segment no longer belongs to this mission');
-		if (audio.status === 'transcribing') return audio;
-		const next = { ...audio, status: 'transcribing' as const, error: null, retryCount: expectedRetryCount };
+		try {
+			const mission = (await tx.objectStore('missions').get(missionId)) as
+				BulkMissionRecord | undefined;
+			if (!mission) throw new Error('Bulk mission is not durable');
+			const audioKey = key(missionId, record.id);
+			if (await tx.objectStore('audio').get(audioKey))
+				throw new Error('Audio segment already exists');
+			const committed: BulkAudioRecord = {
+				...record,
+				missionId,
+				schemaVersion: DB_VERSION,
+				status: 'persisted',
+				activeAttemptId: null,
+				activeAttemptStartedAtMs: null,
+			};
+			await tx.objectStore('audio').put(committed, audioKey);
+			mission.audioSegmentIds = uniqueIds([...(mission.audioSegmentIds ?? []), record.id]);
+			mission.updatedAtMs = Date.now();
+			await tx.objectStore('missions').put(mission, missionId);
+			await tx.done;
+			return committed;
+		} catch (error) {
+			abortTransactionAndThrow(tx, error);
+		}
+	});
+}
+
+export interface BeginAudioTranscriptionAttemptResult {
+	acquired: boolean;
+	record: BulkAudioRecord;
+}
+
+export async function beginAudioTranscriptionAttempt(
+	missionId: string,
+	segmentId: string,
+	attemptId: string,
+	attemptStartedAtMs: number
+): Promise<BeginAudioTranscriptionAttemptResult> {
+	return serializedWrite(async () => {
+		const db = await getDb();
+		const tx = db.transaction(['missions', 'audio'], 'readwrite');
+		const mission = (await tx.objectStore('missions').get(missionId)) as
+			BulkMissionRecord | undefined;
+		const audio = (await tx.objectStore('audio').get(key(missionId, segmentId))) as
+			BulkAudioRecord | undefined;
+		if (!mission || !audio || audio.missionId !== missionId)
+			throw new Error('Audio segment no longer belongs to this mission');
+		if (audio.status === 'transcribing' && audio.activeAttemptId)
+			return { acquired: false, record: audio };
+		const next: BulkAudioRecord = {
+			...audio,
+			status: 'transcribing',
+			error: null,
+			retryCount: Math.max(0, audio.retryCount ?? 0) + 1,
+			activeAttemptId: attemptId,
+			activeAttemptStartedAtMs: attemptStartedAtMs,
+		};
 		await tx.objectStore('audio').put(next, key(missionId, segmentId));
 		mission.updatedAtMs = Date.now();
 		await tx.objectStore('missions').put(mission, missionId);
 		await tx.done;
-		return next;
+		return { acquired: true, record: next };
 	});
 }
 
 export async function commitAudioTranscriptionFailure(
 	missionId: string,
 	segmentId: string,
+	attemptId: string,
 	error: BulkStructuredError
-): Promise<void> {
-	await serializedWrite(async () => {
+): Promise<{
+	committed: boolean;
+	audio: BulkAudioRecord | null;
+	mission: BulkMissionRecord | null;
+}> {
+	return serializedWrite(async () => {
 		const db = await getDb();
 		const tx = db.transaction(['missions', 'audio'], 'readwrite');
-		const mission = (await tx.objectStore('missions').get(missionId)) as BulkMissionRecord | undefined;
-		const audio = (await tx.objectStore('audio').get(key(missionId, segmentId))) as BulkAudioRecord | undefined;
-		if (!mission || !audio) throw new Error('Audio segment no longer exists');
-		await tx.objectStore('audio').put({ ...audio, status: 'failed', error }, key(missionId, segmentId));
+		const mission = (await tx.objectStore('missions').get(missionId)) as
+			BulkMissionRecord | undefined;
+		const audio = (await tx.objectStore('audio').get(key(missionId, segmentId))) as
+			BulkAudioRecord | undefined;
+		if (
+			!mission ||
+			!audio ||
+			audio.status !== 'transcribing' ||
+			audio.activeAttemptId !== attemptId
+		)
+			return { committed: false, audio: null, mission: null };
+		const next: BulkAudioRecord = {
+			...audio,
+			status: 'failed',
+			error,
+			activeAttemptId: null,
+			activeAttemptStartedAtMs: null,
+		};
+		await tx.objectStore('audio').put(next, key(missionId, segmentId));
+		mission.lastError = error;
 		mission.updatedAtMs = Date.now();
 		await tx.objectStore('missions').put(mission, missionId);
 		await tx.done;
+		return { committed: true, audio: next, mission };
+	});
+}
+
+export function serverTranscriptSpanId(segmentId: string): string {
+	return `server:${segmentId}`;
+}
+
+export async function recoverInterruptedAudioAttempts(missionId: string): Promise<number> {
+	return serializedWrite(async () => {
+		const db = await getDb();
+		const tx = db.transaction(['missions', 'audio'], 'readwrite');
+		const mission = (await tx.objectStore('missions').get(missionId)) as
+			BulkMissionRecord | undefined;
+		if (!mission) return 0;
+		const records = (await tx.objectStore('audio').getAll()) as BulkAudioRecord[];
+		let repaired = 0;
+		for (const audio of records) {
+			if (audio.missionId !== missionId || audio.status !== 'transcribing') continue;
+			const next: BulkAudioRecord = {
+				...audio,
+				status: 'failed',
+				error: {
+					code: 'TRANSCRIPTION_INTERRUPTED',
+					message: 'Transcription was interrupted. Retry this recording.',
+					retryable: true,
+				},
+				activeAttemptId: null,
+				activeAttemptStartedAtMs: null,
+			};
+			await tx.objectStore('audio').put(next, key(missionId, audio.id));
+			repaired += 1;
+		}
+		if (repaired) {
+			mission.lastError = {
+				code: 'TRANSCRIPTION_INTERRUPTED',
+				message: 'Transcription was interrupted. Retry this recording.',
+				retryable: true,
+			};
+			mission.updatedAtMs = Date.now();
+			await tx.objectStore('missions').put(mission, missionId);
+		}
+		await tx.done;
+		return repaired;
+	});
+}
+
+export interface CommitAudioTranscriptionSuccessInput {
+	missionId: string;
+	segmentId: string;
+	attemptId: string;
+	text: string;
+	startOffsetMs: number;
+	endOffsetMs: number;
+}
+
+export async function commitAudioTranscriptionSuccess(
+	input: CommitAudioTranscriptionSuccessInput
+): Promise<boolean> {
+	return serializedWrite(async () => {
+		const db = await getDb();
+		const tx = db.transaction(['missions', 'audio', 'spans'], 'readwrite');
+		const mission = (await tx.objectStore('missions').get(input.missionId)) as
+			BulkMissionRecord | undefined;
+		const audio = (await tx.objectStore('audio').get(key(input.missionId, input.segmentId))) as
+			BulkAudioRecord | undefined;
+		const text = input.text.trim();
+		if (
+			!mission ||
+			!audio ||
+			audio.status !== 'transcribing' ||
+			audio.activeAttemptId !== input.attemptId ||
+			!text ||
+			input.startOffsetMs < 0 ||
+			input.endOffsetMs < input.startOffsetMs
+		)
+			return false;
+		const span: BulkTranscriptSpanRecord = {
+			schemaVersion: DB_VERSION,
+			missionId: input.missionId,
+			id: serverTranscriptSpanId(input.segmentId),
+			sourceAudioSegmentId: input.segmentId,
+			text,
+			startOffsetMs: input.startOffsetMs,
+			endOffsetMs: input.endOffsetMs,
+			source: 'server',
+			canonical: true,
+		};
+		await tx.objectStore('spans').put(span, key(input.missionId, span.id));
+		const nextAudio: BulkAudioRecord = {
+			...audio,
+			status: 'done',
+			transcript: text,
+			rawTranscript: text,
+			source: 'server',
+			error: null,
+			activeAttemptId: null,
+			activeAttemptStartedAtMs: null,
+		};
+		await tx.objectStore('audio').put(nextAudio, key(input.missionId, input.segmentId));
+		const spans = (await tx.objectStore('spans').getAll()) as BulkTranscriptSpanRecord[];
+		const canonical = spans
+			.filter((entry) => entry.missionId === input.missionId && entry.canonical)
+			.sort(
+				(a, b) =>
+					(a.startOffsetMs ?? Number.MAX_SAFE_INTEGER) -
+					(b.startOffsetMs ?? Number.MAX_SAFE_INTEGER)
+			)
+			.map((entry) => entry.text.trim())
+			.filter(Boolean)
+			.join(' ');
+		mission.rawTranscript = canonical;
+		mission.canonicalTranscript = canonical;
+		if (!mission.transcriptEdited) mission.editedTranscript = canonical;
+		mission.transcriptSource = mission.transcriptEdited ? 'mixed' : 'server';
+		mission.transcriptSpanIds = uniqueIds([...(mission.transcriptSpanIds ?? []), span.id]);
+		mission.audioSegmentIds = uniqueIds([...(mission.audioSegmentIds ?? []), input.segmentId]);
+		mission.lastError = null;
+		mission.updatedAtMs = Date.now();
+		await tx.objectStore('missions').put(mission, input.missionId);
+		await tx.done;
+		return true;
 	});
 }
 

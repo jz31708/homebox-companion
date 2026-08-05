@@ -185,6 +185,8 @@ export function fromAudioRecord(record: BulkAudioRecord): BulkAudioSegment {
 		source: record.source,
 		error: record.error,
 		retryCount: record.retryCount,
+		activeAttemptId: record.activeAttemptId,
+		activeAttemptStartedAtMs: record.activeAttemptStartedAtMs,
 		byteSize: record.byteSize,
 	};
 }
@@ -205,6 +207,8 @@ export function toAudioRecord(segment: BulkAudioSegment, missionId: string): Bul
 		source: segment.source,
 		error: segment.error ?? null,
 		retryCount: segment.retryCount ?? 0,
+		activeAttemptId: segment.activeAttemptId ?? null,
+		activeAttemptStartedAtMs: segment.activeAttemptStartedAtMs ?? null,
 	};
 }
 

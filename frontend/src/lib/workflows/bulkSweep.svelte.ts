@@ -78,6 +78,8 @@ class BulkSweepWorkflow {
 	private durableWriteFailure: unknown = null;
 	private writeGeneration = 0;
 	private initialMissionPersistence: Promise<void> | null = null;
+	private transcriptionPromises = new Map<string, Promise<void>>();
+	private transcriptionControllers = new Map<string, AbortController>();
 	private removingPhotoIds = new Set<string>();
 
 	private _stateProxy: BulkSweepState | null = null;
@@ -164,24 +166,65 @@ class BulkSweepWorkflow {
 		);
 	}
 
-	async transcribeAudioSegment(segmentId: string): Promise<void> {
+	transcribeAudioSegment(segmentId: string): Promise<void> {
+		const existing = this.transcriptionPromises.get(segmentId);
+		if (existing) return existing;
+		const promise = this.runAudioTranscription(segmentId).finally(() => {
+			if (this.transcriptionPromises.get(segmentId) === promise)
+				this.transcriptionPromises.delete(segmentId);
+			this.transcriptionControllers.delete(segmentId);
+		});
+		this.transcriptionPromises.set(segmentId, promise);
+		return promise;
+	}
+
+	private async runAudioTranscription(segmentId: string): Promise<void> {
 		const segment = this._audioSegments.find((entry) => entry.id === segmentId);
 		if (!segment) return;
 		const context = this.captureWriteContext();
-		const retryCount = (segment.retryCount ?? 0) + 1;
+		const attemptId = `${segmentId}:${createId('attempt')}`;
+		let retryCount = segment.retryCount ?? 0;
 		try {
 			const attempt = await bulkMissionDb.beginAudioTranscriptionAttempt(
 				context.missionId,
 				segmentId,
-				retryCount
+				attemptId,
+				Date.now()
 			);
+			if (!attempt.acquired) return;
+			retryCount = attempt.record.retryCount;
 			this._audioSegments = this._audioSegments.map((entry) =>
-				entry.id === segmentId ? { ...entry, status: attempt.status, transcriptStatus: 'transcribing', retryCount } : entry
+				entry.id === segmentId
+					? {
+							...entry,
+							status: attempt.record.status,
+							transcriptStatus: 'transcribing',
+							retryCount,
+							activeAttemptId: attemptId,
+							activeAttemptStartedAtMs: Date.now(),
+						}
+					: entry
 			);
-			const result = await vision.transcribeAudio(segment.file, `${segmentId}.webm`);
+			const controller = new AbortController();
+			this.transcriptionControllers.set(segmentId, controller);
+			const result = await vision.transcribeAudio(attempt.record.blob, `${segmentId}.webm`, {
+				signal: controller.signal,
+			});
 			const text = result.text.trim();
 			if (!text) throw new Error('Server returned an empty transcript');
 			if (!this.isCurrentWriteContext(context)) return;
+			const committed = await bulkMissionDb.commitAudioTranscriptionSuccess({
+				missionId: context.missionId,
+				segmentId,
+				attemptId,
+				text,
+				startOffsetMs: segment.startedAtMs + (result.start_offset_ms ?? 0),
+				endOffsetMs:
+					result.end_offset_ms == null
+						? segment.endedAtMs
+						: segment.startedAtMs + result.end_offset_ms,
+			});
+			if (!committed || !this.isCurrentWriteContext(context)) return;
 			this._audioSegments = this._audioSegments.map((entry) =>
 				entry.id === segmentId
 					? {
@@ -193,30 +236,29 @@ class BulkSweepWorkflow {
 							source: 'server',
 							error: null,
 							retryCount,
+							activeAttemptId: null,
+							activeAttemptStartedAtMs: null,
 						}
 					: entry
 			);
-			await this.appendLiveTranscript(text, true, 'server', context.missionId, segmentId);
+			this._transcriptSpans = this._transcriptSpans.filter(
+				(entry) => entry.id !== bulkMissionDb.serverTranscriptSpanId(segmentId)
+			);
+			this._transcriptSpans = [
+				...this._transcriptSpans,
+				{
+					id: bulkMissionDb.serverTranscriptSpanId(segmentId),
+					text,
+					startMs: segment.startedAtMs,
+					endMs: segment.endedAtMs,
+					startOffsetMs: segment.startedAtMs,
+					endOffsetMs: segment.endedAtMs,
+					sourceAudioSegmentId: segmentId,
+					source: 'server',
+					canonical: true,
+				},
+			];
 			if (!this.isCurrentWriteContext(context)) return;
-			const completedSegment = {
-				...segment,
-				transcriptStatus: 'done' as const,
-				status: 'done' as const,
-				transcript: text,
-				rawTranscript: text,
-				source: 'server' as const,
-				error: null,
-				retryCount,
-			};
-			const missionSnapshot = this.buildMissionSnapshot(context);
-			await this.enqueueDurableWrite(async (queuedContext) => {
-				await bulkMissionDb.addOrUpdateAudio(
-					toAudioRecord(completedSegment, queuedContext.missionId)
-				);
-				if (missionSnapshot) await this.persistMissionNow(missionSnapshot, queuedContext);
-			});
-			if (!this.isCurrentWriteContext(context)) return;
-			await this.persistMission();
 		} catch (error) {
 			if (!this.isCurrentWriteContext(context)) return;
 			const structuredError: BulkStructuredError = {
@@ -239,11 +281,12 @@ class BulkSweepWorkflow {
 			const missionSnapshot = this.buildMissionSnapshot(context);
 			try {
 				await this.enqueueDurableWrite(async (queuedContext) => {
-				await bulkMissionDb.commitAudioTranscriptionFailure(
-					queuedContext.missionId,
-					segmentId,
-					structuredError
-				);
+					await bulkMissionDb.commitAudioTranscriptionFailure(
+						queuedContext.missionId,
+						segmentId,
+						attemptId,
+						structuredError
+					);
 					if (missionSnapshot) await this.persistMissionNow(missionSnapshot, queuedContext);
 				});
 			} catch (persistenceError) {
@@ -257,6 +300,10 @@ class BulkSweepWorkflow {
 		const segment = this._audioSegments.find((entry) => entry.id === segmentId);
 		if (!segment || segment.status === 'transcribing') return;
 		await this.transcribeAudioSegment(segmentId);
+	}
+
+	cancelActiveTranscriptions(): void {
+		for (const controller of this.transcriptionControllers.values()) controller.abort();
 	}
 
 	setParentItem(id: string | null, name: string | null): void {
@@ -341,6 +388,7 @@ class BulkSweepWorkflow {
 	async recover(): Promise<boolean> {
 		const mission = await bulkMissionDb.loadActiveMission();
 		if (!mission) return false;
+		await bulkMissionDb.recoverInterruptedAudioAttempts(mission.id);
 		const bundle = await bulkMissionDb.loadMissionBundle(mission.id);
 		if (!bundle) return false;
 		this.reset();
@@ -625,12 +673,12 @@ class BulkSweepWorkflow {
 			rawTranscript: '',
 		};
 		if (!this.isCurrentWriteContext(context)) return Promise.resolve('');
-		this._audioSegments = [...this._audioSegments, segment];
-		const missionSnapshot = this.buildMissionSnapshot(context);
-		await this.enqueueDurableWrite(async (queuedContext) => {
-			await bulkMissionDb.addOrUpdateAudio(toAudioRecord(segment, queuedContext.missionId));
-			if (missionSnapshot) await this.persistMissionNow(missionSnapshot, queuedContext);
-		});
+		const committed = await bulkMissionDb.insertAudioSegment(
+			context.missionId,
+			toAudioRecord(segment, context.missionId)
+		);
+		if (!this.isCurrentWriteContext(context)) return Promise.resolve('');
+		this._audioSegments = [...this._audioSegments, fromAudioRecord(committed)];
 		return segment.id;
 	}
 
@@ -684,6 +732,20 @@ class BulkSweepWorkflow {
 			this._interimTranscriptText = text;
 			return Promise.resolve();
 		}
+	}
+
+	updateBrowserTranscriptPreview(text: string, _final = false, expectedMissionId?: string): void {
+		if (
+			!text.trim() ||
+			(expectedMissionId &&
+				expectedMissionId !== this.missionId &&
+				!expectedMissionId.startsWith(`${this.missionId}:`))
+		)
+			return;
+		this._interimTranscriptText = text;
+		if (_final)
+			this._error =
+				'Transcript preview captured; server transcription will save the canonical text.';
 	}
 
 	editTranscript(text: string): Promise<void> {
@@ -1260,6 +1322,7 @@ class BulkSweepWorkflow {
 	}
 
 	reset(): void {
+		this.cancelActiveTranscriptions();
 		this.invalidateQueuedWrites();
 		for (const photo of this._photos) safeRevoke(photo.previewUrl);
 		this._status = 'idle';
