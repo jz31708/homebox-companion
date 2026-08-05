@@ -1,0 +1,59 @@
+name: Phase 2 validation
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Sync backend dependencies
+        run: uv sync --dev
+      - name: Run narration backend tests
+        run: uv run pytest tests/test_audio_transcription.py tests/test_transcription_provider.py -q
+      - name: Lint narration backend
+        run: >-
+          uv run ruff check
+          server/api/tools/audio.py
+          server/api/tools/audio_auth.py
+          server/services/transcription.py
+          src/homebox_companion/core/config.py
+          tests/test_audio_transcription.py
+          tests/test_transcription_provider.py
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Check frontend types
+        run: npm run check
+      - name: Lint frontend
+        run: npm run lint
+      - name: Build frontend
+        run: npm run build
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+      - name: Run Phase 2 Playwright coverage
+        run: npm run e2e -- phase2-narration.spec.ts --workers=1
