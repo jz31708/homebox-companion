@@ -170,6 +170,14 @@ class BulkSweepWorkflow {
 		const context = this.captureWriteContext();
 		const retryCount = (segment.retryCount ?? 0) + 1;
 		try {
+			const attempt = await bulkMissionDb.beginAudioTranscriptionAttempt(
+				context.missionId,
+				segmentId,
+				retryCount
+			);
+			this._audioSegments = this._audioSegments.map((entry) =>
+				entry.id === segmentId ? { ...entry, status: attempt.status, transcriptStatus: 'transcribing', retryCount } : entry
+			);
 			const result = await vision.transcribeAudio(segment.file, `${segmentId}.webm`);
 			const text = result.text.trim();
 			if (!text) throw new Error('Server returned an empty transcript');
@@ -231,9 +239,11 @@ class BulkSweepWorkflow {
 			const missionSnapshot = this.buildMissionSnapshot(context);
 			try {
 				await this.enqueueDurableWrite(async (queuedContext) => {
-					await bulkMissionDb.addOrUpdateAudio(
-						toAudioRecord(failedSegment, queuedContext.missionId)
-					);
+				await bulkMissionDb.commitAudioTranscriptionFailure(
+					queuedContext.missionId,
+					segmentId,
+					structuredError
+				);
 					if (missionSnapshot) await this.persistMissionNow(missionSnapshot, queuedContext);
 				});
 			} catch (persistenceError) {

@@ -453,6 +453,10 @@
 		if (result) goto(resolve('/bulk-review'));
 		else if (workflow.state.error) showToast(workflow.state.error, 'error');
 	}
+
+	async function retryTranscription(segmentId: string): Promise<void> {
+		await workflow.retryAudioTranscription(segmentId);
+	}
 </script>
 
 <svelte:head>
@@ -559,6 +563,28 @@
 				{workflow.state.error}
 			</p>
 		{/if}
+	</section>
+
+	<section class="mb-4 rounded-xl border border-neutral-700 bg-neutral-900 p-4">
+		<h3 class="mb-3 font-semibold text-neutral-100">Recordings</h3>
+		<div class="space-y-2">
+			{#each workflow.state.audioSegments as segment (segment.id)}
+				<div class="flex items-center justify-between gap-3 rounded-lg bg-neutral-800 p-3">
+					<div class="min-w-0">
+						<p class="truncate text-body-sm text-neutral-200">Recording {segment.id.slice(-6)}</p>
+						<p class="text-caption text-neutral-400">
+							{segment.status} · attempt {segment.retryCount ?? 0}
+						</p>
+						{#if segment.error}<p class="text-caption text-error-300">{segment.error.message}</p>{/if}
+					</div>
+					{#if segment.status === 'failed'}
+						<Button variant="secondary" onclick={() => void retryTranscription(segment.id)}>
+							Retry transcription
+						</Button>
+					{/if}
+				</div>
+			{/each}
+		</div>
 	</section>
 
 	<div class="mb-4 flex items-center justify-between">

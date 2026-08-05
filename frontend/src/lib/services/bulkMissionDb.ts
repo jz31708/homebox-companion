@@ -8,6 +8,7 @@ import type {
 	BulkOutboxOperationRecord,
 	BulkPhotoRecord,
 	BulkTranscriptSpanRecord,
+	BulkStructuredError,
 } from '$lib/types/bulkDomain';
 
 const DB_NAME = 'hbc-bulk-missions';
@@ -759,6 +760,45 @@ export async function removePhoto(missionId: string, photoId: string): Promise<v
 
 export async function addOrUpdateAudio(audio: BulkAudioRecord): Promise<void> {
 	await saveMissionScopedRecord('audio', audio, 'audioSegmentIds');
+}
+
+export async function beginAudioTranscriptionAttempt(
+	missionId: string,
+	segmentId: string,
+	expectedRetryCount: number
+): Promise<BulkAudioRecord> {
+	return serializedWrite(async () => {
+		const db = await getDb();
+		const tx = db.transaction(['missions', 'audio'], 'readwrite');
+		const mission = (await tx.objectStore('missions').get(missionId)) as BulkMissionRecord | undefined;
+		const audio = (await tx.objectStore('audio').get(key(missionId, segmentId))) as BulkAudioRecord | undefined;
+		if (!mission || !audio || audio.missionId !== missionId) throw new Error('Audio segment no longer belongs to this mission');
+		if (audio.status === 'transcribing') return audio;
+		const next = { ...audio, status: 'transcribing' as const, error: null, retryCount: expectedRetryCount };
+		await tx.objectStore('audio').put(next, key(missionId, segmentId));
+		mission.updatedAtMs = Date.now();
+		await tx.objectStore('missions').put(mission, missionId);
+		await tx.done;
+		return next;
+	});
+}
+
+export async function commitAudioTranscriptionFailure(
+	missionId: string,
+	segmentId: string,
+	error: BulkStructuredError
+): Promise<void> {
+	await serializedWrite(async () => {
+		const db = await getDb();
+		const tx = db.transaction(['missions', 'audio'], 'readwrite');
+		const mission = (await tx.objectStore('missions').get(missionId)) as BulkMissionRecord | undefined;
+		const audio = (await tx.objectStore('audio').get(key(missionId, segmentId))) as BulkAudioRecord | undefined;
+		if (!mission || !audio) throw new Error('Audio segment no longer exists');
+		await tx.objectStore('audio').put({ ...audio, status: 'failed', error }, key(missionId, segmentId));
+		mission.updatedAtMs = Date.now();
+		await tx.objectStore('missions').put(mission, missionId);
+		await tx.done;
+	});
 }
 
 export async function saveSpan(span: BulkTranscriptSpanRecord): Promise<void> {
