@@ -1,5 +1,6 @@
 from pathlib import Path
 
+# One-shot correction. The workflow and this script are removed after green validation.
 DB_PATH = Path('frontend/src/lib/services/bulkMissionDb.ts')
 BASE_PATH = Path('frontend/src/lib/workflows/bulkSweepBase.svelte.ts')
 
