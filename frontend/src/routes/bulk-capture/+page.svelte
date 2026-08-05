@@ -3,7 +3,7 @@
 	import { resolve } from '$app/paths';
 	import { onDestroy, onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
-	import { bulkSweepWorkflow } from '$lib/workflows/bulkSweep.svelte';
+	import { bulkSweepWorkflow, type BulkMissionIdentity } from '$lib/workflows/bulkSweep.svelte';
 	import * as bulkMissionDb from '$lib/services/bulkMissionDb';
 	import { showToast } from '$lib/stores/ui.svelte';
 	import Button from '$lib/components/Button.svelte';
@@ -29,6 +29,7 @@
 	let photoActionErrors = $state<Record<string, string>>({});
 	let photoRetryKinds = $state<Record<string, 'edit' | 'remove'>>({});
 	let transcriptPersistenceError = $state('');
+	let transcriptPreviewNotice = $state('');
 	let filePickerError = $state('');
 	let failedFilePickerFiles = $state<File[]>([]);
 	let retryingFilePicker = $state(false);
@@ -36,15 +37,9 @@
 		Record<string, Partial<{ note: string; groupLabel: string; ignored: boolean }>>
 	>({});
 
-	type WorkflowIdentity = string | { missionId?: string; generation?: number } | null | undefined;
-	type WorkflowIdentityReader = {
-		getMissionIdentity?: () => WorkflowIdentity;
-		getCaptureIdentity?: () => WorkflowIdentity;
-	};
-
 	interface NarrationSession {
 		generation: number;
-		missionIdentity: string;
+		workflowIdentity: BulkMissionIdentity;
 		stream: MediaStream;
 		recorder: MediaRecorder;
 		speechRecognition: any;
@@ -53,22 +48,9 @@
 		recordingStoppedAt: number | null;
 		stopping: boolean;
 		invalidated: boolean;
-		hasSuccessfulFinalSpeech: boolean;
-		transcriptWrites: Promise<void>[];
 	}
 
 	let narrationSession: NarrationSession | null = null;
-
-	function readWorkflowMissionIdentity(): string {
-		const reader = workflow as unknown as WorkflowIdentityReader;
-		const provided = reader.getMissionIdentity?.() ?? reader.getCaptureIdentity?.();
-		if (typeof provided === 'string' && provided) return provided;
-		if (provided && typeof provided === 'object' && provided.missionId) {
-			return `${provided.missionId}:${provided.generation ?? ''}`;
-		}
-		// Keep this narrow fallback until the workflow exposes its durable identity.
-		return `${workflow.state.locationId ?? ''}:${workflow.state.startedAtMs ?? ''}`;
-	}
 
 	function isCurrentNarration(session: NarrationSession): boolean {
 		return (
@@ -76,7 +58,8 @@
 			narrationSession === session &&
 			session.generation === narrationGeneration &&
 			!session.invalidated &&
-			session.missionIdentity === readWorkflowMissionIdentity()
+			workflow.getMissionIdentity().missionId === session.workflowIdentity.missionId &&
+			workflow.getMissionIdentity().generation === session.workflowIdentity.generation
 		);
 	}
 
@@ -156,18 +139,19 @@
 	}
 
 	async function startNarration() {
-		transcriptPersistenceError =
-			'Recording is saved locally; server transcription will preserve the canonical transcript.';
+		transcriptPreviewNotice =
+			'Browser preview is optional; server transcription will save the canonical transcript.';
 		stopNarration(true);
 		const generation = ++narrationGeneration;
-		const missionIdentity = readWorkflowMissionIdentity();
+		const workflowIdentity = workflow.getMissionIdentity();
 		let stream: MediaStream | null = null;
 		try {
 			stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 			if (
 				!routeActive ||
 				generation !== narrationGeneration ||
-				missionIdentity !== readWorkflowMissionIdentity()
+				workflow.getMissionIdentity().missionId !== workflowIdentity.missionId ||
+				workflow.getMissionIdentity().generation !== workflowIdentity.generation
 			) {
 				stopStream(stream);
 				return;
@@ -175,7 +159,7 @@
 			const recorder = new MediaRecorder(stream);
 			const session: NarrationSession = {
 				generation,
-				missionIdentity,
+				workflowIdentity,
 				stream,
 				recorder,
 				speechRecognition: null,
@@ -184,8 +168,6 @@
 				recordingStoppedAt: null,
 				stopping: false,
 				invalidated: false,
-				hasSuccessfulFinalSpeech: false,
-				transcriptWrites: [],
 			};
 			narrationSession = session;
 			mediaRecorder = recorder;
@@ -230,16 +212,14 @@
 						workflow.updateBrowserTranscriptPreview(
 							text,
 							Boolean(result.isFinal),
-							session.missionIdentity
+							session.workflowIdentity
 						)
 					);
 					const handledWrite = write.then(
-						() => {
-							if (result.isFinal) session.hasSuccessfulFinalSpeech = true;
-						},
+						() => {},
 						(error) => reportTranscriptFailure(session, error)
 					);
-					session.transcriptWrites.push(handledWrite);
+					void handledWrite;
 				}
 			};
 			recognition.onerror = () => {
@@ -266,19 +246,24 @@
 	async function finalizeNarration(session: NarrationSession): Promise<void> {
 		try {
 			if (!isCurrentNarration(session)) return;
-			await Promise.all(session.transcriptWrites);
 			if (!isCurrentNarration(session)) return;
 			const blob = new Blob(session.chunks, {
 				type: session.recorder.mimeType || 'audio/webm',
 			});
 			if (blob.size === 0) return;
-			const startedAt = workflow.state.startedAtMs ?? session.recordingStartedAt;
-			const endedAt = session.recordingStoppedAt ?? Date.now();
+			const missionStartedAt = workflow.state.startedAtMs;
+			if (missionStartedAt == null) throw new Error('Mission timing is unavailable');
+			const startedAt = Math.max(0, session.recordingStartedAt - missionStartedAt);
+			const endedAt = Math.max(
+				startedAt,
+				(session.recordingStoppedAt ?? Date.now()) - missionStartedAt
+			);
 			const segmentId = await workflow.addAudioSegment(
 				blob,
 				blob.type || 'audio/webm',
-				session.recordingStartedAt - startedAt,
-				endedAt - startedAt
+				startedAt,
+				endedAt,
+				session.workflowIdentity
 			);
 			if (!isCurrentNarration(session)) return;
 			if (segmentId) await workflow.transcribeAudioSegment(segmentId);
@@ -554,14 +539,19 @@
 			class="input min-h-32"
 			placeholder="Talk while capturing, or type notes here. You can fix this before analysis."
 			value={workflow.state.editedTranscriptText}
-			oninput={(event) => workflow.editTranscript(event.currentTarget.value)}
+			oninput={(event) =>
+				void workflow.editTranscript(event.currentTarget.value).catch(() => undefined)}
 		></textarea>
 		{#if workflow.state.interimTranscriptText}
 			<p class="mt-2 text-body-sm italic text-neutral-400">
 				{workflow.state.interimTranscriptText}
 			</p>
 		{/if}
-		{#if transcriptPersistenceError}
+		{#if transcriptPreviewNotice}
+			<div class="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900" role="alert">
+				{transcriptPreviewNotice}
+			</div>
+		{:else if transcriptPersistenceError}
 			<p class="text-error-300 mt-2 text-body-sm" role="alert">
 				{transcriptPersistenceError}
 			</p>

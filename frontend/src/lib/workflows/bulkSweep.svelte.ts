@@ -45,7 +45,53 @@ interface DurableWriteContext {
 	generation: number;
 }
 
+export interface BulkMissionIdentity {
+	missionId: string;
+	generation: number;
+}
+
 class BulkSweepWorkflow {
+	getMissionIdentity(): BulkMissionIdentity {
+		return { missionId: this.missionId, generation: this.writeGeneration };
+	}
+
+	private isCurrentMissionIdentity(identity: BulkMissionIdentity): boolean {
+		return identity.missionId === this.missionId && identity.generation === this.writeGeneration;
+	}
+
+	private transcriptionError(error: unknown): BulkStructuredError {
+		const value = error as { name?: string; status?: number; statusCode?: number };
+		if (value?.name === 'AbortError')
+			return {
+				code: 'TRANSCRIPTION_CANCELLED',
+				message: 'Transcription was cancelled. Retry this recording.',
+				retryable: true,
+			};
+		const status = value?.status ?? value?.statusCode;
+		if (status === 401 || status === 403)
+			return {
+				code: 'TRANSCRIPTION_AUTH_FAILED',
+				message: 'Authentication failed. Sign in again before retrying.',
+				retryable: true,
+			};
+		if (status === 413)
+			return {
+				code: 'TRANSCRIPTION_AUDIO_TOO_LARGE',
+				message: 'This recording is too large to transcribe.',
+				retryable: false,
+			};
+		if (status === 415)
+			return {
+				code: 'TRANSCRIPTION_AUDIO_UNSUPPORTED',
+				message: 'This recording format is not supported.',
+				retryable: false,
+			};
+		return {
+			code: 'TRANSCRIPTION_FAILED',
+			message: 'Server transcription failed. Retry this recording.',
+			retryable: true,
+		};
+	}
 	private missionId = createId('mission_bulk');
 	private _status = $state<BulkSweepStatus>('idle');
 	private _locationId = $state<string | null>(null);
@@ -224,71 +270,45 @@ class BulkSweepWorkflow {
 						? segment.endedAtMs
 						: segment.startedAtMs + result.end_offset_ms,
 			});
-			if (!committed || !this.isCurrentWriteContext(context)) return;
+			if (
+				!committed.committed ||
+				!committed.audio ||
+				!committed.span ||
+				!committed.mission ||
+				!this.isCurrentWriteContext(context)
+			)
+				return;
 			this._audioSegments = this._audioSegments.map((entry) =>
-				entry.id === segmentId
-					? {
-							...entry,
-							transcriptStatus: 'done',
-							status: 'done',
-							transcript: text,
-							rawTranscript: text,
-							source: 'server',
-							error: null,
-							retryCount,
-							activeAttemptId: null,
-							activeAttemptStartedAtMs: null,
-						}
-					: entry
+				entry.id === segmentId ? fromAudioRecord(committed.audio!) : entry
 			);
 			this._transcriptSpans = this._transcriptSpans.filter(
-				(entry) => entry.id !== bulkMissionDb.serverTranscriptSpanId(segmentId)
+				(entry) => entry.id !== committed.span!.id
 			);
-			this._transcriptSpans = [
-				...this._transcriptSpans,
-				{
-					id: bulkMissionDb.serverTranscriptSpanId(segmentId),
-					text,
-					startMs: segment.startedAtMs,
-					endMs: segment.endedAtMs,
-					startOffsetMs: segment.startedAtMs,
-					endOffsetMs: segment.endedAtMs,
-					sourceAudioSegmentId: segmentId,
-					source: 'server',
-					canonical: true,
-				},
-			];
+			this._transcriptSpans = [...this._transcriptSpans, fromTranscriptSpanRecord(committed.span)];
+			this.applyCommittedMissionTranscript(committed.mission);
 			if (!this.isCurrentWriteContext(context)) return;
 		} catch (error) {
 			if (!this.isCurrentWriteContext(context)) return;
-			const structuredError: BulkStructuredError = {
-				code: 'TRANSCRIPTION_FAILED',
-				message: error instanceof Error ? error.message : 'Server transcription failed',
-				retryable: true,
-			};
-			const failedSegment = {
-				...segment,
-				transcriptStatus: 'failed' as const,
-				status: 'failed' as const,
-				error: structuredError,
-				retryCount,
-			};
-			this._audioSegments = this._audioSegments.map((entry) =>
-				entry.id === segmentId ? failedSegment : entry
-			);
-			this._error = `Transcription failed for this recording. Retry transcription.`;
-			this._interimTranscriptText = this._error;
-			const missionSnapshot = this.buildMissionSnapshot(context);
+			const structuredError = this.transcriptionError(error);
 			try {
-				await this.enqueueDurableWrite(async (queuedContext) => {
-					await bulkMissionDb.commitAudioTranscriptionFailure(
-						queuedContext.missionId,
-						segmentId,
-						attemptId,
-						structuredError
+				const failure = await bulkMissionDb.commitAudioTranscriptionFailure(
+					context.missionId,
+					segmentId,
+					attemptId,
+					structuredError
+				);
+				if (
+					failure.committed &&
+					failure.audio &&
+					failure.mission &&
+					this.isCurrentWriteContext(context)
+				) {
+					this._audioSegments = this._audioSegments.map((entry) =>
+						entry.id === segmentId ? fromAudioRecord(failure.audio!) : entry
 					);
-					if (missionSnapshot) await this.persistMissionNow(missionSnapshot, queuedContext);
-				});
+					this._error = 'Transcription failed for this recording. Retry transcription.';
+					this._interimTranscriptText = this._error;
+				}
 			} catch (persistenceError) {
 				log.error('Bulk transcription failure could not be persisted', persistenceError);
 			}
@@ -298,7 +318,7 @@ class BulkSweepWorkflow {
 
 	async retryAudioTranscription(segmentId: string): Promise<void> {
 		const segment = this._audioSegments.find((entry) => entry.id === segmentId);
-		if (!segment || segment.status === 'transcribing') return;
+		if (!segment || segment.status !== 'failed') return;
 		await this.transcribeAudioSegment(segmentId);
 	}
 
@@ -386,11 +406,12 @@ class BulkSweepWorkflow {
 	}
 
 	async recover(): Promise<boolean> {
-		const mission = await bulkMissionDb.loadActiveMission();
-		if (!mission) return false;
-		await bulkMissionDb.recoverInterruptedAudioAttempts(mission.id);
-		const bundle = await bulkMissionDb.loadMissionBundle(mission.id);
+		const active = await bulkMissionDb.loadActiveMission();
+		if (!active) return false;
+		await bulkMissionDb.recoverInterruptedAudioAttempts(active.id);
+		const bundle = await bulkMissionDb.loadMissionBundle(active.id);
 		if (!bundle) return false;
+		const mission = bundle.mission;
 		this.reset();
 		this.missionId = mission.id;
 		this._status = mission.status === 'complete' ? 'idle' : (mission.status as BulkSweepStatus);
@@ -658,9 +679,21 @@ class BulkSweepWorkflow {
 		mimeType: string,
 		startedAtMs: number,
 		endedAtMs: number,
-		expectedMissionId?: string
+		expectedIdentity?: BulkMissionIdentity
 	): Promise<string> {
-		if (expectedMissionId && expectedMissionId !== this.missionId) return Promise.resolve('');
+		if (expectedIdentity && !this.isCurrentMissionIdentity(expectedIdentity))
+			return Promise.resolve('');
+		if (
+			blob.size <= 0 ||
+			!Number.isFinite(startedAtMs) ||
+			!Number.isFinite(endedAtMs) ||
+			startedAtMs < 0 ||
+			endedAtMs < startedAtMs
+		)
+			return Promise.resolve('');
+		if (this.initialMissionPersistence) await this.initialMissionPersistence;
+		if (expectedIdentity && !this.isCurrentMissionIdentity(expectedIdentity))
+			return Promise.resolve('');
 		const context = this.captureWriteContext();
 		const segment: BulkAudioSegment = {
 			id: createId('a'),
@@ -673,9 +706,11 @@ class BulkSweepWorkflow {
 			rawTranscript: '',
 		};
 		if (!this.isCurrentWriteContext(context)) return Promise.resolve('');
-		const committed = await bulkMissionDb.insertAudioSegment(
-			context.missionId,
-			toAudioRecord(segment, context.missionId)
+		const committed = await this.enqueueDurableWrite((queuedContext) =>
+			bulkMissionDb.insertAudioSegment(
+				queuedContext.missionId,
+				toAudioRecord(segment, queuedContext.missionId)
+			)
 		);
 		if (!this.isCurrentWriteContext(context)) return Promise.resolve('');
 		this._audioSegments = [...this._audioSegments, fromAudioRecord(committed)];
@@ -689,6 +724,10 @@ class BulkSweepWorkflow {
 		expectedMissionId?: string,
 		sourceAudioSegmentId?: string
 	): Promise<void> {
+		if (source === 'live_preview') {
+			this._interimTranscriptText = text;
+			return Promise.resolve();
+		}
 		if (expectedMissionId && expectedMissionId !== this.missionId) return Promise.resolve();
 		if (!text.trim()) return Promise.resolve();
 		const context = this.captureWriteContext();
@@ -734,18 +773,13 @@ class BulkSweepWorkflow {
 		}
 	}
 
-	updateBrowserTranscriptPreview(text: string, _final = false, expectedMissionId?: string): void {
-		if (
-			!text.trim() ||
-			(expectedMissionId &&
-				expectedMissionId !== this.missionId &&
-				!expectedMissionId.startsWith(`${this.missionId}:`))
-		)
-			return;
+	updateBrowserTranscriptPreview(
+		text: string,
+		_final: boolean,
+		expectedIdentity: BulkMissionIdentity
+	): void {
+		if (!text.trim() || !this.isCurrentMissionIdentity(expectedIdentity)) return;
 		this._interimTranscriptText = text;
-		if (_final)
-			this._error =
-				'Transcript preview captured; server transcription will save the canonical text.';
 	}
 
 	editTranscript(text: string): Promise<void> {
@@ -753,7 +787,27 @@ class BulkSweepWorkflow {
 		this._transcriptEdited = text !== this._rawTranscriptText;
 		this._transcriptSource =
 			this._transcriptSource === 'none' || this._transcriptSource === 'manual' ? 'manual' : 'mixed';
-		return this.persistMission();
+		const identity = this.getMissionIdentity();
+		return bulkMissionDb
+			.updateMissionTranscriptEdit(identity.missionId, text)
+			.then((mission) => {
+				if (this.isCurrentMissionIdentity(identity)) this.applyCommittedMissionTranscript(mission);
+			})
+			.catch((error) => {
+				if (this.isCurrentMissionIdentity(identity)) {
+					this._error = 'Transcript could not be saved. Retry before analysis.';
+					this.durableWriteFailure = error;
+				}
+				throw error;
+			});
+	}
+
+	private applyCommittedMissionTranscript(mission: BulkMissionRecord): void {
+		this._rawTranscriptText = mission.rawTranscript ?? '';
+		this._canonicalTranscriptText = mission.canonicalTranscript ?? this._rawTranscriptText;
+		this._editedTranscriptText = mission.editedTranscript ?? this._canonicalTranscriptText;
+		this._transcriptEdited = mission.transcriptEdited ?? false;
+		this._transcriptSource = mission.transcriptSource ?? 'none';
 	}
 
 	enterTranscriptReview(): void {

@@ -527,6 +527,11 @@ function mergeMissionLists(
 		current.nextCaptureSequence ?? 0,
 		incoming.nextCaptureSequence ?? 0
 	);
+	merged.rawTranscript = current.rawTranscript;
+	merged.canonicalTranscript = current.canonicalTranscript;
+	merged.editedTranscript = current.editedTranscript;
+	merged.transcriptEdited = current.transcriptEdited;
+	merged.transcriptSource = current.transcriptSource;
 	return merged;
 }
 
@@ -570,6 +575,33 @@ export async function saveMission(mission: BulkMissionRecord): Promise<void> {
 		value.updatedAtMs = Date.now();
 		await tx.objectStore('missions').put(value, mission.id);
 		await tx.done;
+	});
+}
+
+export async function updateMissionTranscriptEdit(
+	missionId: string,
+	editedTranscript: string
+): Promise<BulkMissionRecord> {
+	return serializedWrite(async () => {
+		const db = await getDb();
+		const tx = db.transaction('missions', 'readwrite');
+		const mission = (await tx.objectStore('missions').get(missionId)) as
+			BulkMissionRecord | undefined;
+		if (!mission) throw new Error('Bulk mission is not durable');
+		const canonical = mission.canonicalTranscript ?? mission.rawTranscript ?? '';
+		mission.editedTranscript = editedTranscript;
+		mission.transcriptEdited = editedTranscript !== canonical;
+		mission.transcriptSource = mission.transcriptEdited
+			? canonical.trim()
+				? 'mixed'
+				: 'manual'
+			: canonical.trim()
+				? 'server'
+				: 'none';
+		mission.updatedAtMs = Date.now();
+		await tx.objectStore('missions').put(mission, missionId);
+		await tx.done;
+		return mission;
 	});
 }
 
@@ -783,6 +815,14 @@ export async function insertAudioSegment(
 			const audioKey = key(missionId, record.id);
 			if (await tx.objectStore('audio').get(audioKey))
 				throw new Error('Audio segment already exists');
+			if (record.blob.size <= 0) throw new Error('Audio segment is empty');
+			if (
+				!Number.isFinite(record.startedAtMs) ||
+				!Number.isFinite(record.endedAtMs) ||
+				record.startedAtMs < 0 ||
+				record.endedAtMs < record.startedAtMs
+			)
+				throw new Error('Audio segment timing is invalid');
 			const committed: BulkAudioRecord = {
 				...record,
 				missionId,
@@ -790,6 +830,8 @@ export async function insertAudioSegment(
 				status: 'persisted',
 				activeAttemptId: null,
 				activeAttemptStartedAtMs: null,
+				byteSize: record.blob.size,
+				mimeType: record.blob.type || record.mimeType,
 			};
 			await tx.objectStore('audio').put(committed, audioKey);
 			mission.audioSegmentIds = uniqueIds([...(mission.audioSegmentIds ?? []), record.id]);
@@ -803,10 +845,9 @@ export async function insertAudioSegment(
 	});
 }
 
-export interface BeginAudioTranscriptionAttemptResult {
-	acquired: boolean;
-	record: BulkAudioRecord;
-}
+export type BeginAudioTranscriptionAttemptResult =
+	| { acquired: true; record: BulkAudioRecord }
+	| { acquired: false; reason: 'already_transcribing' | 'not_retryable'; record: BulkAudioRecord };
 
 export async function beginAudioTranscriptionAttempt(
 	missionId: string,
@@ -824,7 +865,9 @@ export async function beginAudioTranscriptionAttempt(
 		if (!mission || !audio || audio.missionId !== missionId)
 			throw new Error('Audio segment no longer belongs to this mission');
 		if (audio.status === 'transcribing' && audio.activeAttemptId)
-			return { acquired: false, record: audio };
+			return { acquired: false, reason: 'already_transcribing', record: audio };
+		if (audio.status !== 'persisted' && audio.status !== 'failed')
+			return { acquired: false, reason: 'not_retryable', record: audio };
 		const next: BulkAudioRecord = {
 			...audio,
 			status: 'transcribing',
@@ -933,9 +976,16 @@ export interface CommitAudioTranscriptionSuccessInput {
 	endOffsetMs: number;
 }
 
+export interface CommitAudioTranscriptionSuccessResult {
+	committed: boolean;
+	audio: BulkAudioRecord | null;
+	span: BulkTranscriptSpanRecord | null;
+	mission: BulkMissionRecord | null;
+}
+
 export async function commitAudioTranscriptionSuccess(
 	input: CommitAudioTranscriptionSuccessInput
-): Promise<boolean> {
+): Promise<CommitAudioTranscriptionSuccessResult> {
 	return serializedWrite(async () => {
 		const db = await getDb();
 		const tx = db.transaction(['missions', 'audio', 'spans'], 'readwrite');
@@ -950,10 +1000,11 @@ export async function commitAudioTranscriptionSuccess(
 			audio.status !== 'transcribing' ||
 			audio.activeAttemptId !== input.attemptId ||
 			!text ||
-			input.startOffsetMs < 0 ||
-			input.endOffsetMs < input.startOffsetMs
+			input.startOffsetMs < audio.startedAtMs ||
+			input.endOffsetMs < input.startOffsetMs ||
+			input.endOffsetMs > audio.endedAtMs
 		)
-			return false;
+			return { committed: false, audio: null, span: null, mission: null };
 		const span: BulkTranscriptSpanRecord = {
 			schemaVersion: DB_VERSION,
 			missionId: input.missionId,
@@ -979,11 +1030,16 @@ export async function commitAudioTranscriptionSuccess(
 		await tx.objectStore('audio').put(nextAudio, key(input.missionId, input.segmentId));
 		const spans = (await tx.objectStore('spans').getAll()) as BulkTranscriptSpanRecord[];
 		const canonical = spans
-			.filter((entry) => entry.missionId === input.missionId && entry.canonical)
+			.filter(
+				(entry) =>
+					entry.missionId === input.missionId && entry.canonical && entry.source === 'server'
+			)
 			.sort(
 				(a, b) =>
 					(a.startOffsetMs ?? Number.MAX_SAFE_INTEGER) -
-					(b.startOffsetMs ?? Number.MAX_SAFE_INTEGER)
+						(b.startOffsetMs ?? Number.MAX_SAFE_INTEGER) ||
+					(a.sourceAudioSegmentId ?? '').localeCompare(b.sourceAudioSegmentId ?? '') ||
+					a.id.localeCompare(b.id)
 			)
 			.map((entry) => entry.text.trim())
 			.filter(Boolean)
@@ -994,11 +1050,11 @@ export async function commitAudioTranscriptionSuccess(
 		mission.transcriptSource = mission.transcriptEdited ? 'mixed' : 'server';
 		mission.transcriptSpanIds = uniqueIds([...(mission.transcriptSpanIds ?? []), span.id]);
 		mission.audioSegmentIds = uniqueIds([...(mission.audioSegmentIds ?? []), input.segmentId]);
-		mission.lastError = null;
+		if (mission.lastError?.code?.startsWith('TRANSCRIPTION_')) mission.lastError = null;
 		mission.updatedAtMs = Date.now();
 		await tx.objectStore('missions').put(mission, input.missionId);
 		await tx.done;
-		return true;
+		return { committed: true, audio: nextAudio, span, mission };
 	});
 }
 
