@@ -31,7 +31,7 @@ phases:
     name: narration-security-and-runtime
     status: in_progress
     prompt: codex/03_NARRATION_SECURITY_RUNTIME.md
-    evidence: server/api/tools/audio.py, src/homebox_companion/core/config.py, frontend/src/lib/api/vision.ts, frontend/src/lib/workflows/bulkSweep.svelte.ts, tests/test_audio_transcription.py
+    evidence: server/api/tools/audio.py, server/api/tools/audio_auth.py, server/services/transcription.py, src/homebox_companion/core/config.py, frontend/src/lib/api/vision.ts, frontend/src/lib/services/bulkMissionDb.ts, frontend/src/lib/workflows/bulkSweepBase.svelte.ts, frontend/src/lib/workflows/bulkSweep.svelte.ts, frontend/src/routes/bulk-capture/+page.svelte, frontend/e2e/phase2-narration.spec.ts, tests/test_audio_transcription.py, tests/test_transcription_provider.py, docs/audio-transcription.md
   - id: 3
     name: observation-and-fusion-production-path
     status: changes_requested
