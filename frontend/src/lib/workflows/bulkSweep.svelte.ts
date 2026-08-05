@@ -11,8 +11,8 @@ import {
 
 export type { BulkMissionIdentity } from './bulkSweepBase.svelte';
 
-const transcriptionPromises = new Map<string, Promise<void>>();
-const transcriptionControllers = new Map<string, AbortController>();
+const transcriptionPromises = new SvelteMap<string, Promise<void>>();
+const transcriptionControllers = new SvelteMap<string, AbortController>();
 const activeAudioOverlay = new SvelteMap<
 	string,
 	Pick<BulkAudioSegment, 'status' | 'retryCount' | 'activeAttemptId' | 'activeAttemptStartedAtMs'>
