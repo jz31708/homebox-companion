@@ -330,9 +330,11 @@ class BulkSweepWorkflow {
 					this._interimTranscriptText = this._error;
 				}
 			} catch (persistenceError) {
-				log.error('Bulk transcription failure could not be persisted', persistenceError);
+				void persistenceError;
+				log.error('Bulk transcription failure could not be persisted safely');
 			}
-			log.warn('Bulk server transcription unavailable; audio remains persisted', error);
+			void error;
+			log.warn('Bulk server transcription unavailable; audio remains persisted safely');
 		}
 	}
 

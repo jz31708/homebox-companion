@@ -528,7 +528,7 @@ test('late recorder preview and provider callbacks from mission A cannot mutate 
 test('microphone denial leaves typed transcript usable and creates no audio record', async ({ page }) => {
 	const { api } = await prepareFreshNarration(page, { microphone: 'denied' });
 	await page.getByRole('button', { name: 'Narrate' }).click();
-	await expect(page.getByText(/Microphone unavailable/i)).toBeVisible();
+	await expect(page.getByText('Microphone unavailable. You can type notes instead.', { exact: true })).toBeVisible();
 	const textarea = page.getByPlaceholder('Talk while capturing, or type notes here.');
 	await textarea.fill('typed kitchen notes');
 	await expect(textarea).toHaveValue('typed kitchen notes');
