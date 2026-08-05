@@ -31,10 +31,15 @@ Its accepted scope includes:
 - mission-generation binding for queued and delayed callbacks;
 - discard cleanup and Phase 1 regression coverage.
 
-The managed Phase 1 gate later passed 38/38:
+The final managed Phase 1 gate passes 38/38:
 
 - `frontend/e2e/auth-bootstrap.spec.ts`: 2/2;
 - `frontend/e2e/phase1-persistence-regressions.spec.ts`: 36/36.
+
+The discard lifecycle now also uses a synchronous mission tombstone before the
+first asynchronous deletion step. Generic mission/scoped writes and recovery
+ignore tombstoned missions, preventing a queued write or immediate navigation
+from resurrecting discarded work. The corresponding Phase 1 regression passes.
 
 ## Phase 2 scope
 
@@ -112,23 +117,37 @@ No credential value is committed.
 - Typed notes remain usable when microphone access or server transcription is
   unavailable.
 
-## Validation evidence
+## Final validation evidence
 
-GitHub Actions run `31015293699` checked out the final Phase 2 code candidate
-`90d02a113fdeb56859c7a8c64e4312ad65c74dca` after its patch job and completed
-successfully:
+Final remote head:
+`1a96bf5b002de4e30963440499ba0828c9d1e6b8`.
+
+GitHub Actions run `31019147387` executed the read-only validation workflow
+against PR merge commit `40d3a91178f0b4a78bb2906ceb69e8326e31840a`, which contains that branch head.
+Both jobs completed successfully.
 
 Backend:
 
-- focused transcription suite: 40/40 passed;
-- focused Ruff validation: passed.
+- `uv run ruff check .`: passed;
+- `uv run ty check src server tests`: green, with 17 warning diagnostics in
+  existing non-blocking typing areas;
+- focused transcription tests: 40/40 passed;
+- complete selected backend suite: 267 passed, 35 deselected, 1 dependency
+  deprecation warning.
 
 Frontend:
 
-- `npm run check`: 0 errors and 0 warnings;
+- `npm run check`: 0 errors, 0 warnings;
 - `npm run lint`: passed;
 - `npm run build`: passed;
-- `frontend/e2e/phase2-narration.spec.ts`: 15/15 passed with one managed worker.
+- auth bootstrap gate: 2/2 passed;
+- Phase 1 persistence gate: 36/36 passed;
+- Phase 2 narration gate: 15/15 passed;
+- complete managed serial E2E suite: 62/62 passed.
+
+The complete E2E suite includes the maintained Bulk/Classic paths, Medicine
+Cabinet and Medicine Intake, the Phase 1 persistence matrix, and the Phase 2
+narration matrix.
 
 The 15 Phase 2 browser scenarios cover:
 
@@ -144,14 +163,13 @@ The 15 Phase 2 browser scenarios cover:
 - mission-A callback isolation from mission B;
 - typed-note fallback with denied microphone access.
 
-A read-only final validation workflow now runs repository-wide Ruff, `ty`, the
-focused and complete backend suites, frontend checks/build, the Phase 1 gates,
-the Phase 2 narration gate, and the complete managed serial E2E suite. The
-workflow contains no source-patching or branch-write behavior.
+The retained `.github/workflows/phase2-validation.yml` is read-only and contains
+no source-patching or branch-write behavior. All temporary patch workflows and
+scripts used during diagnosis have been removed.
 
 ## Current gate
 
-Phase 2 remains `in_progress` pending independent senior review of the final
-remote head. Do not begin Phase 3, deploy, merge, or perform the physical pilot
-until that review explicitly passes and the two ledgers are transitioned in a
-separate bounded commit.
+Phase 2 remains `in_progress` pending independent senior review of
+`1a96bf5b002de4e30963440499ba0828c9d1e6b8`. Do not begin Phase 3, deploy,
+merge, or perform the physical pilot until that review explicitly passes and
+the two ledgers are transitioned in a separate bounded commit.
