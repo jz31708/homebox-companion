@@ -7,6 +7,7 @@ import {
 	failTranscriptSpanWrites,
 	installDelayedMissionPhotoAppend,
 	installBulkApiMocks,
+	establishAuthenticatedOrigin,
 	installNarrationMocks,
 	missionId,
 	photoRecord,
@@ -68,7 +69,7 @@ function candidateRecord(overrides: Record<string, unknown> = {}) {
 
 async function prepareCapture(page: import('@playwright/test').Page): Promise<void> {
 	await installBulkApiMocks(page);
-	await page.goto('/robots.txt');
+	await establishAuthenticatedOrigin(page);
 	await resetBulkDatabase(page);
 	await enterBulkCapture(page);
 }
@@ -184,7 +185,7 @@ test('UI photo state becomes safe only after durable photo append commits', asyn
 
 test('generic mission saves preserve durable observation and outbox ID lists', async ({ page }) => {
 	await installBulkApiMocks(page);
-	await page.goto('/robots.txt');
+	await establishAuthenticatedOrigin(page);
 	await resetBulkDatabase(page);
 	await seedReviewBundle(
 		page,
@@ -414,7 +415,7 @@ test('mission context, transcript, candidate, and outbox fields survive reload',
 	page,
 }) => {
 	await installBulkApiMocks(page);
-	await page.goto('/robots.txt');
+	await establishAuthenticatedOrigin(page);
 	await resetBulkDatabase(page);
 	await seedReviewBundle(page, { parentItemId: 'parent-1', parentItemName: 'Cable box' });
 	await page.goto('/bulk-capture');
@@ -440,7 +441,7 @@ test('mission context, transcript, candidate, and outbox fields survive reload',
 
 test('transcript span identity and edited text flush before reload', async ({ page }) => {
 	await installBulkApiMocks(page);
-	await page.goto('/robots.txt');
+	await establishAuthenticatedOrigin(page);
 	await resetBulkDatabase(page);
 	await seedReviewBundle(
 		page,
@@ -496,7 +497,7 @@ test('outbox recovery reads and restores complete retry state after reload', asy
 		};
 	});
 	await installBulkApiMocks(page);
-	await page.goto('/robots.txt');
+	await establishAuthenticatedOrigin(page);
 	await resetBulkDatabase(page);
 	await seedReviewBundle(page);
 	await page.goto('/bulk-review');
@@ -526,7 +527,7 @@ test('first capture waits for the newly-created mission before appending evidenc
 	page,
 }) => {
 	await installBulkApiMocks(page);
-	await page.goto('/robots.txt');
+	await establishAuthenticatedOrigin(page);
 	await resetBulkDatabase(page);
 	await page.goto('/location');
 	await page.getByPlaceholder('Search all locations...').fill('Living');
@@ -552,7 +553,7 @@ test('accepted reactive tag and custom-field payloads reserve outbox state witho
 	page,
 }) => {
 	await installBulkApiMocks(page);
-	await page.goto('/robots.txt');
+	await establishAuthenticatedOrigin(page);
 	await resetBulkDatabase(page);
 	await seedReviewBundle(
 		page,
@@ -585,7 +586,7 @@ test('successful submission persists candidate status and Homebox identity acros
 	page,
 }) => {
 	await installBulkApiMocks(page);
-	await page.goto('/robots.txt');
+	await establishAuthenticatedOrigin(page);
 	await resetBulkDatabase(page);
 	await seedReviewBundle(
 		page,
@@ -621,7 +622,7 @@ test('candidate recovery and edit preserve duplicateCandidateIds without fabrica
 	page,
 }) => {
 	await installBulkApiMocks(page);
-	await page.goto('/robots.txt');
+	await establishAuthenticatedOrigin(page);
 	await resetBulkDatabase(page);
 	await seedReviewBundle(
 		page,
@@ -650,7 +651,7 @@ test('photo removal strips evidence-photo IDs from surviving outbox payload, man
 	page,
 }) => {
 	await installBulkApiMocks(page);
-	await page.goto('/robots.txt');
+	await establishAuthenticatedOrigin(page);
 	await resetBulkDatabase(page);
 	await seedReviewBundle(
 		page,
@@ -683,7 +684,7 @@ test('concurrent stale mission save cannot reintroduce a photo removed atomicall
 	page,
 }) => {
 	await installBulkApiMocks(page);
-	await page.goto('/robots.txt');
+	await establishAuthenticatedOrigin(page);
 	await resetBulkDatabase(page);
 	await seedReviewBundle(page, {}, { evidencePhotoIds: [], evidence: [] });
 	await page.goto('/bulk-capture');
@@ -734,7 +735,7 @@ test('transcript edit failure is surfaced by flush/review instead of claiming a 
 
 test('v1 to v2 migration preserves blobs, keys, and migration metadata', async ({ page }) => {
 	await installBulkApiMocks(page);
-	await page.goto('/robots.txt');
+	await establishAuthenticatedOrigin(page);
 	const v1Mission = {
 		id: missionId,
 		status: 'capturing',
@@ -834,7 +835,7 @@ test('candidate replacement removes stale records and updates the mission ID lis
 	page,
 }) => {
 	await installBulkApiMocks(page);
-	await page.goto('/robots.txt');
+	await establishAuthenticatedOrigin(page);
 	await resetBulkDatabase(page);
 	const mission = baseMission({
 		status: 'reviewing',
@@ -879,7 +880,7 @@ test('candidate replacement failure is atomic and leaves the prior candidate rec
 		};
 	});
 	await installBulkApiMocks(page);
-	await page.goto('/robots.txt');
+	await establishAuthenticatedOrigin(page);
 	await resetBulkDatabase(page);
 	await seedReviewBundle(page);
 	await page.goto('/bulk-review');
@@ -903,7 +904,7 @@ test('failed photo edit rolls back visible and durable state', async ({ page }) 
 		};
 	});
 	await installBulkApiMocks(page);
-	await page.goto('/robots.txt');
+	await establishAuthenticatedOrigin(page);
 	await resetBulkDatabase(page);
 	await seedReviewBundle(page);
 	await page.goto('/bulk-capture');
@@ -927,7 +928,7 @@ test('successful removal keeps mission, chunk, candidate, and outbox references 
 	page,
 }) => {
 	await installBulkApiMocks(page);
-	await page.goto('/robots.txt');
+	await establishAuthenticatedOrigin(page);
 	await resetBulkDatabase(page);
 	await seedReviewBundle(page, {}, {}, { chunk: { status: 'complete' } });
 	await page.goto('/bulk-capture');
@@ -978,7 +979,7 @@ test('photo removal failure leaves UI unchanged and guards duplicate clicks', as
 		};
 	});
 	await installBulkApiMocks(page);
-	await page.goto('/robots.txt');
+	await establishAuthenticatedOrigin(page);
 	await resetBulkDatabase(page);
 	await seedReviewBundle(page);
 	await page.goto('/bulk-capture');
@@ -997,7 +998,7 @@ test('photo removal failure leaves UI unchanged and guards duplicate clicks', as
 
 test('discard removes mission-scoped metadata along with the mission', async ({ page }) => {
 	await installBulkApiMocks(page);
-	await page.goto('/robots.txt');
+	await establishAuthenticatedOrigin(page);
 	await resetBulkDatabase(page);
 	await seedReviewBundle(page);
 	await seedV2Bundle(page, {
@@ -1138,7 +1139,7 @@ test('location fallback and persisted parent override use the correct payload ta
 	page,
 }) => {
 	await installBulkApiMocks(page);
-	await page.goto('/robots.txt');
+	await establishAuthenticatedOrigin(page);
 	await resetBulkDatabase(page);
 	await seedReviewBundle(
 		page,
@@ -1205,7 +1206,7 @@ test('phase1 blocker 2: v1 migration durably repairs mission ID lists when nextC
 	page,
 }) => {
 	await installBulkApiMocks(page);
-	await page.goto('/robots.txt');
+	await establishAuthenticatedOrigin(page);
 	await seedV1Bundle(page, {
 		missions: [
 			{
@@ -1237,7 +1238,7 @@ test('phase1 blocker 3: SpeechRecognition failure still sends the durable audio 
 }) => {
 	await installBulkApiMocks(page);
 	await installNarrationMocks(page, { speechRecognition: 'error', transcription: 'success' });
-	await page.goto('/robots.txt');
+	await establishAuthenticatedOrigin(page);
 	await resetBulkDatabase(page);
 	await enterBulkCapture(page);
 	await page.getByRole('button', { name: 'Narrate' }).click();
@@ -1264,7 +1265,7 @@ test('phase1 blocker 4: server transcription failure persists failed/error/retry
 }) => {
 	await installBulkApiMocks(page);
 	await installNarrationMocks(page, { speechRecognition: 'absent', transcription: 'failure' });
-	await page.goto('/robots.txt');
+	await establishAuthenticatedOrigin(page);
 	await resetBulkDatabase(page);
 	await enterBulkCapture(page);
 	await page.getByRole('button', { name: 'Narrate' }).click();
@@ -1289,7 +1290,7 @@ test('phase1 blocker 5: removing a photo invalidates the outbox requestHash with
 	page,
 }) => {
 	await installBulkApiMocks(page);
-	await page.goto('/robots.txt');
+	await establishAuthenticatedOrigin(page);
 	await resetBulkDatabase(page);
 	await seedReviewBundle(
 		page,
@@ -1411,7 +1412,7 @@ test('phase1 capture lifecycle B: delayed MediaRecorder callbacks cannot attach 
 		failAudioPersistence: true,
 	});
 	await installBulkApiMocks(page);
-	await page.goto('/robots.txt');
+	await establishAuthenticatedOrigin(page);
 	await resetBulkDatabase(page);
 	await enterBulkCapture(page);
 	await page.locator('input[type="file"]').setInputFiles({

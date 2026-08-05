@@ -52,13 +52,27 @@ export function baseMission(overrides: Record<string, unknown> = {}) {
 	};
 }
 
-export async function installBulkApiMocks(page: Page): Promise<void> {
-	await page.addInitScript(() => {
-		window.localStorage.setItem('hbc_token', 'phase1-e2e-token');
-		window.localStorage.setItem('hbc_token_expires', new Date(Date.now() + 3600000).toISOString());
-	});
+export interface BulkApiMockRequest {
+	path: string;
+	method: string;
+	authorization: string | null;
+}
+
+export interface BulkApiMockTelemetry {
+	requests: BulkApiMockRequest[];
+}
+
+export async function installBulkApiMocks(page: Page): Promise<BulkApiMockTelemetry> {
+	const telemetry: BulkApiMockTelemetry = { requests: [] };
 	await page.route('**/api/**', async (route) => {
-		const path = new URL(route.request().url()).pathname.replace('/api', '');
+		const pathname = new URL(route.request().url()).pathname;
+		if (!pathname.startsWith('/api/')) return route.fallback();
+		const path = pathname.slice('/api'.length);
+		telemetry.requests.push({
+			path,
+			method: route.request().method(),
+			authorization: route.request().headers().authorization ?? null,
+		});
 		if (path === '/config') {
 			await route.fulfill({
 				json: {
@@ -94,6 +108,42 @@ export async function installBulkApiMocks(page: Page): Promise<void> {
 		}
 		await route.fulfill({ status: 404, json: { detail: `Unhandled ${path}` } });
 	});
+	return telemetry;
+}
+
+export async function establishAuthenticatedOrigin(page: Page): Promise<{
+	token: string;
+	expiresAt: string;
+	email: string;
+}> {
+	await page.goto('/robots.txt', { waitUntil: 'domcontentloaded' });
+	const origin = new URL(page.url()).origin;
+	if (origin !== 'http://127.0.0.1:4173') throw new Error(`Unexpected E2E origin: ${origin}`);
+	const state = {
+		token: 'phase-e2e-token',
+		expiresAt: '2099-01-01T00:00:00.000Z',
+		email: 'phase-e2e@example.invalid',
+	};
+	await page.evaluate((auth) => {
+		localStorage.clear();
+		sessionStorage.clear();
+		localStorage.setItem('hbc_token', auth.token);
+		localStorage.setItem('hbc_token_expires', auth.expiresAt);
+		localStorage.setItem('hbc_user_email', auth.email);
+	}, state);
+	const stored = await page.evaluate(() => ({
+		token: localStorage.getItem('hbc_token'),
+		expiresAt: localStorage.getItem('hbc_token_expires'),
+		email: localStorage.getItem('hbc_user_email'),
+	}));
+	if (
+		stored.token !== state.token ||
+		stored.expiresAt !== state.expiresAt ||
+		stored.email !== state.email
+	) {
+		throw new Error(`E2E auth storage could not be established on ${origin}`);
+	}
+	return state;
 }
 
 export async function installNarrationMocks(

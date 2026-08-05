@@ -1,3 +1,6 @@
+// This configuration intentionally does not build or start a server. It is for
+// interactive debugging against an explicitly managed server only and must not
+// be used as phase-gate or release evidence.
 import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
