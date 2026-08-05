@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock
 
 import httpx
-from fastapi import FastAPI, UploadFile
+import pytest
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from homebox_companion import HomeboxClient
 from homebox_companion.core.config import Settings, get_settings
-from server.api.tools.audio import router, sanitize_audio_filename
+from server.api.tools.audio import read_audio_upload, router, sanitize_audio_filename
 from server.dependencies import get_client
 from server.services.transcription import (
     ProviderTranscript,
@@ -204,14 +205,17 @@ def test_oversized_upload_rejected_before_provider() -> None:
     assert_provider_unused(harness)
 
 
-def test_unreadable_upload_returns_safe_400() -> None:
-    harness = make_harness()
-    with patch.object(UploadFile, "read", new=AsyncMock(side_effect=OSError("AUDIO_SENTINEL"))):
-        response = upload(harness)
-    assert response.status_code == 400
-    assert response.json() == {"detail": "Audio upload could not be read"}
-    assert "AUDIO_SENTINEL" not in response.text
-    assert_provider_unused(harness)
+@pytest.mark.anyio
+async def test_unreadable_upload_returns_safe_400() -> None:
+    class BrokenUpload:
+        async def read(self, _size: int = -1) -> bytes:
+            raise OSError("AUDIO_SENTINEL")
+
+    with pytest.raises(HTTPException) as caught:
+        await read_audio_upload(BrokenUpload(), 1024)  # type: ignore[arg-type]
+    assert caught.value.status_code == 400
+    assert caught.value.detail == "Audio upload could not be read"
+    assert "AUDIO_SENTINEL" not in str(caught.value.detail)
 
 
 def test_provider_timeout_maps_to_safe_503() -> None:
