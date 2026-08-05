@@ -15,6 +15,7 @@ const DB_NAME = 'hbc-bulk-missions';
 const DB_VERSION = 2;
 const MISSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const DISCARD_MARKER_PREFIX = 'hbc-bulk-discarded:';
+const DISCARD_MARKER_PREFIX = 'hbc-bulk-discarded:';
 const STORES = [
 	'missions',
 	'photos',
@@ -41,6 +42,53 @@ let migrationPromise: Promise<void> | null = null;
 
 function requireBrowser(): void {
 	if (!browser) throw new Error('Bulk mission storage is only available in the browser');
+}
+
+function discardMarkerKey(missionId: string): string {
+	return `${DISCARD_MARKER_PREFIX}${missionId}`;
+}
+
+export function markMissionDiscarded(missionId: string): void {
+	requireBrowser();
+	try {
+		localStorage.setItem(discardMarkerKey(missionId), String(Date.now()));
+	} catch {
+		// IndexedDB deletion still runs when storage policy blocks localStorage.
+	}
+}
+
+function isMissionDiscarded(missionId: string): boolean {
+	if (!browser) return false;
+	try {
+		return localStorage.getItem(discardMarkerKey(missionId)) !== null;
+	} catch {
+		return false;
+	}
+}
+
+function discardedMissionIds(now = Date.now()): string[] {
+	if (!browser) return [];
+	const ids: string[] = [];
+	try {
+		for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+			const marker = localStorage.key(index);
+			if (!marker?.startsWith(DISCARD_MARKER_PREFIX)) continue;
+			const missionId = marker.slice(DISCARD_MARKER_PREFIX.length);
+			const markedAt = Number(localStorage.getItem(marker) ?? now);
+			if (!missionId) {
+				localStorage.removeItem(marker);
+				continue;
+			}
+			if (Number.isFinite(markedAt) && now - markedAt > MISSION_TTL_MS) {
+				localStorage.removeItem(marker);
+				continue;
+			}
+			ids.push(missionId);
+		}
+	} catch {
+		return ids;
+	}
+	return ids;
 }
 
 function discardMarkerKey(missionId: string): string {
@@ -1233,6 +1281,7 @@ async function missionRecords<T>(store: StoreName, missionId: string): Promise<T
 export async function loadMissionBundle(missionId: string): Promise<BulkMissionBundle | null> {
 	requireBrowser();
 	if (isMissionDiscarded(missionId)) return null;
+	if (isMissionDiscarded(missionId)) return null;
 	const db = await getDb();
 	const mission = (await db.get('missions', missionId)) as BulkMissionRecord | undefined;
 	if (!mission) return null;
@@ -1283,6 +1332,14 @@ export async function cleanupStaleMissions(now = Date.now()): Promise<void> {
 
 export async function resetDatabaseForTests(): Promise<void> {
 	if (!browser) return;
+	try {
+		for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+			const marker = localStorage.key(index);
+			if (marker?.startsWith(DISCARD_MARKER_PREFIX)) localStorage.removeItem(marker);
+		}
+	} catch {
+		// Test reset still deletes IndexedDB when localStorage is unavailable.
+	}
 	try {
 		for (let index = localStorage.length - 1; index >= 0; index -= 1) {
 			const marker = localStorage.key(index);
