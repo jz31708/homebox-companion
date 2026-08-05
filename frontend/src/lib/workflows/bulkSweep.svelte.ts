@@ -11,7 +11,7 @@ import {
 
 export type { BulkMissionIdentity } from './bulkSweepBase.svelte';
 
-type RuntimeWorkflow = typeof baseWorkflow & {
+type RuntimeInternals = {
 	_audioSegments: BulkAudioSegment[];
 	_transcriptSpans: BulkTranscriptSpan[];
 	_interimTranscriptText: string;
@@ -19,12 +19,12 @@ type RuntimeWorkflow = typeof baseWorkflow & {
 	applyCommittedMissionTranscript(mission: BulkMissionRecord): void;
 };
 
-const workflow = baseWorkflow as RuntimeWorkflow;
+const runtime = baseWorkflow as unknown as RuntimeInternals;
 const transcriptionPromises = new Map<string, Promise<void>>();
 const transcriptionControllers = new Map<string, AbortController>();
 
 function currentIdentity(identity: BulkMissionIdentity): boolean {
-	const current = workflow.getMissionIdentity();
+	const current = baseWorkflow.getMissionIdentity();
 	return current.missionId === identity.missionId && current.generation === identity.generation;
 }
 
@@ -118,7 +118,7 @@ function serverSpanOffsets(
 
 function replaceAudio(record: Parameters<typeof fromAudioRecord>[0]): void {
 	const converted = fromAudioRecord(record);
-	workflow._audioSegments = workflow._audioSegments.map((entry) =>
+	runtime._audioSegments = runtime._audioSegments.map((entry) =>
 		entry.id === converted.id ? converted : entry
 	);
 }
@@ -140,17 +140,17 @@ async function persistAttemptFailure(
 			return;
 		}
 		replaceAudio(failure.audio);
-		workflow._error = error.message;
+		runtime._error = error.message;
 	} catch {
 		log.error(`Bulk transcription persistence failed safely (${error.code})`);
 	}
 }
 
 async function runAudioTranscription(segmentId: string): Promise<void> {
-	const initial = workflow._audioSegments.find((entry) => entry.id === segmentId);
+	const initial = runtime._audioSegments.find((entry) => entry.id === segmentId);
 	if (!initial || (initial.status !== 'persisted' && initial.status !== 'failed')) return;
 
-	const identity = workflow.getMissionIdentity();
+	const identity = baseWorkflow.getMissionIdentity();
 	const currentAttemptId = attemptId(segmentId);
 	let controller: AbortController | null = null;
 
@@ -214,13 +214,13 @@ async function runAudioTranscription(segmentId: string): Promise<void> {
 
 		replaceAudio(committed.audio);
 		const span = fromTranscriptSpanRecord(committed.span);
-		workflow._transcriptSpans = [
-			...workflow._transcriptSpans.filter((entry) => entry.id !== span.id),
+		runtime._transcriptSpans = [
+			...runtime._transcriptSpans.filter((entry) => entry.id !== span.id),
 			span,
 		];
-		workflow.applyCommittedMissionTranscript(committed.mission);
-		workflow._interimTranscriptText = '';
-		workflow._error = null;
+		runtime.applyCommittedMissionTranscript(committed.mission);
+		runtime._interimTranscriptText = '';
+		runtime._error = null;
 	} catch (error) {
 		const structured = safeTranscriptionError(error);
 		await persistAttemptFailure(identity, segmentId, currentAttemptId, structured);
@@ -232,7 +232,7 @@ async function runAudioTranscription(segmentId: string): Promise<void> {
 	}
 }
 
-workflow.transcribeAudioSegment = (segmentId: string): Promise<void> => {
+baseWorkflow.transcribeAudioSegment = (segmentId: string): Promise<void> => {
 	const existing = transcriptionPromises.get(segmentId);
 	if (existing) return existing;
 	const promise = runAudioTranscription(segmentId).finally(() => {
@@ -244,27 +244,31 @@ workflow.transcribeAudioSegment = (segmentId: string): Promise<void> => {
 	return promise;
 };
 
-workflow.retryAudioTranscription = async (segmentId: string): Promise<void> => {
-	const segment = workflow._audioSegments.find((entry) => entry.id === segmentId);
+baseWorkflow.retryAudioTranscription = async (segmentId: string): Promise<void> => {
+	const segment = runtime._audioSegments.find((entry) => entry.id === segmentId);
 	if (!segment || segment.status !== 'failed') return;
-	await workflow.transcribeAudioSegment(segmentId);
+	await baseWorkflow.transcribeAudioSegment(segmentId);
 };
 
-workflow.cancelActiveTranscriptions = (): void => {
+baseWorkflow.cancelActiveTranscriptions = (): void => {
 	for (const controller of transcriptionControllers.values()) controller.abort();
 };
 
+const mutableWorkflow = baseWorkflow as unknown as Record<
+	string,
+	(...args: unknown[]) => unknown
+>;
 for (const methodName of [
 	'discardPersistedMission',
 	'continueSameArea',
 	'finishLocation',
 	'reset',
 ] as const) {
-	const original = workflow[methodName].bind(workflow) as (...args: unknown[]) => unknown;
-	(workflow as unknown as Record<string, unknown>)[methodName] = (...args: unknown[]) => {
-		workflow.cancelActiveTranscriptions();
+	const original = mutableWorkflow[methodName].bind(baseWorkflow);
+	mutableWorkflow[methodName] = (...args: unknown[]) => {
+		baseWorkflow.cancelActiveTranscriptions();
 		return original(...args);
 	};
 }
 
-export const bulkSweepWorkflow = workflow;
+export const bulkSweepWorkflow = baseWorkflow;
