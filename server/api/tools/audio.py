@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.requests import ClientDisconnect
 
 from homebox_companion.core.config import Settings, get_settings
@@ -37,7 +37,7 @@ class TranscriptionResponse(BaseModel):
     text: str
     start_offset_ms: int | None = None
     end_offset_ms: int | None = None
-    segments: list[TranscriptionSegmentResponse] = []
+    segments: list[TranscriptionSegmentResponse] = Field(default_factory=list)
 
 
 _ALLOWED_MEDIA_TYPES = {
