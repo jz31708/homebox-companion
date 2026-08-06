@@ -11,7 +11,12 @@ from pydantic import BaseModel, Field
 from homebox_companion import settings
 from homebox_companion.ai.images import encode_image_bytes_to_data_uri
 from homebox_companion.ai.llm import vision_completion
-from server.dependencies import VisionContext, get_vision_context, require_llm_configured, validate_files_size
+from server.dependencies import (
+    VisionContext,
+    get_vision_context,
+    require_llm_configured,
+    validate_files_size,
+)
 
 router = APIRouter()
 
@@ -100,10 +105,13 @@ def _user_prompt(
         photo_lines.append(
             f"Image {image_number} = photoId={photo.id}; role={photo.contextRole}; "
             f"capture=P{photo.captureSequence:03d}; offsetMs={photo.sessionOffsetMs}; "
-            f"localSpanIds={photo.localTranscriptSpanIds}; note={photo.note!r}; group={photo.groupLabel!r}"
+            f"localSpanIds={photo.localTranscriptSpanIds}; note={photo.note!r}; "
+            f"group={photo.groupLabel!r}"
         )
     span_lines = [
-        f"{span.id} [{span.startMs},{span.endMs}]: {span.text}" for span in spans if span.text.strip()
+        f"{span.id} [{span.startMs},{span.endMs}]: {span.text}"
+        for span in spans
+        if span.text.strip()
     ]
     return f"""Analyze this Bulk Sweep chunk for Homebox item creation.
 
@@ -135,9 +143,17 @@ def _validated_observations(
     output: list[ExplicitObservation] = []
 
     for observation in observations:
-        valid_photo_ids = list(dict.fromkeys(photo_id for photo_id in observation.photoIds if photo_id in allowed_photos))
+        valid_photo_ids = list(
+            dict.fromkeys(
+                photo_id for photo_id in observation.photoIds if photo_id in allowed_photos
+            )
+        )
         valid_span_ids = list(
-            dict.fromkeys(span_id for span_id in observation.transcriptSpanIds if span_id in allowed_spans)
+            dict.fromkeys(
+                span_id
+                for span_id in observation.transcriptSpanIds
+                if span_id in allowed_spans
+            )
         )
         if len(valid_photo_ids) != len(observation.photoIds):
             warnings.append("invalid_photo_evidence_removed")
@@ -155,16 +171,18 @@ def _validated_observations(
             evidence.append(reference)
             if reference.photoId not in valid_photo_ids:
                 valid_photo_ids.append(reference.photoId)
-            if reference.transcriptSpanId and reference.transcriptSpanId not in valid_span_ids:
+            if (
+                reference.transcriptSpanId
+                and reference.transcriptSpanId not in valid_span_ids
+            ):
                 valid_span_ids.append(reference.transcriptSpanId)
 
         if not valid_photo_ids:
             observation.uncertaintyReasons = sorted(
-                set([*observation.uncertaintyReasons, "missing_photo_evidence"])
+                {*observation.uncertaintyReasons, "missing_photo_evidence"}
             )
             warnings.append("observation_without_photo_evidence")
         elif not primary_photos.intersection(valid_photo_ids):
-            # The same item will be emitted by the neighbouring primary chunk.
             warnings.append("context_only_observation_suppressed")
             continue
 
@@ -188,11 +206,23 @@ def _validated_observations(
 
 @router.post("/bulk-observe-v2", response_model=BulkObservationResponseV2)
 async def bulk_observe_v2(
-    images: Annotated[list[UploadFile], File(description="Timeline-aware Bulk Sweep image chunk")],
-    session_meta: Annotated[str, Form(description="Complete chunk/photo timeline metadata")],
-    transcript_spans: Annotated[str, Form(description="Complete durable transcript spans")] = "[]",
-    edited_transcript: Annotated[str, Form(description="Canonical user-edited transcript")] = "",
-    ctx: Annotated[VisionContext, Depends(get_vision_context)] = None,  # type: ignore[assignment]
+    images: Annotated[
+        list[UploadFile],
+        File(description="Timeline-aware Bulk Sweep image chunk"),
+    ],
+    session_meta: Annotated[
+        str,
+        Form(description="Complete chunk/photo timeline metadata"),
+    ],
+    transcript_spans: Annotated[
+        str,
+        Form(description="Complete durable transcript spans"),
+    ] = "[]",
+    edited_transcript: Annotated[
+        str,
+        Form(description="Canonical user-edited transcript"),
+    ] = "",
+    _ctx: Annotated[VisionContext, Depends(get_vision_context)] = None,  # type: ignore[assignment]
     api_key: Annotated[str, Depends(require_llm_configured)] = "",  # noqa: ARG001
 ) -> BulkObservationResponseV2:
     try:
@@ -204,18 +234,33 @@ async def bulk_observe_v2(
     photos = [TimelinePhotoMeta.model_validate(value) for value in metadata.get("photos", [])]
     requested_ids = [str(value) for value in metadata.get("photoIds", [])]
     primary_ids = {str(value) for value in metadata.get("primaryPhotoIds", [])}
-    if not photos or requested_ids != [photo.id for photo in photos] or len(images) != len(photos):
-        raise HTTPException(status_code=400, detail="Observation images must match complete ordered photo metadata")
+    if (
+        not photos
+        or requested_ids != [photo.id for photo in photos]
+        or len(images) != len(photos)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Observation images must match complete ordered photo metadata",
+        )
     if not primary_ids or not primary_ids.issubset(set(requested_ids)):
-        raise HTTPException(status_code=400, detail="Observation chunk requires valid primary photo IDs")
+        raise HTTPException(
+            status_code=400,
+            detail="Observation chunk requires valid primary photo IDs",
+        )
     if {photo.id for photo in photos if photo.contextRole == "primary"} != primary_ids:
-        raise HTTPException(status_code=400, detail="Primary photo roles do not match primary photo IDs")
+        raise HTTPException(
+            status_code=400,
+            detail="Primary photo roles do not match primary photo IDs",
+        )
 
     spans = [TimelineSpan.model_validate(value) for value in span_data]
     allowed_span_ids = {span.id for span in spans}
     for photo in photos:
         photo.localTranscriptSpanIds = [
-            span_id for span_id in photo.localTranscriptSpanIds if span_id in allowed_span_ids
+            span_id
+            for span_id in photo.localTranscriptSpanIds
+            if span_id in allowed_span_ids
         ]
 
     validated = await validate_files_size(images)
