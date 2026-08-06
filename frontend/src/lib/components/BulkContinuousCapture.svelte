@@ -226,7 +226,7 @@
 		<div class="p-4">
 			<Button variant="primary" full onclick={startSweep} disabled={snapshot.starting || stopping}>
 				<Camera size={18} />
-				{snapshot.starting ? 'Starting sweep…' : 'Start sweep'}
+				{snapshot.starting ? 'Starting camera…' : 'Start camera & narrate sweep'}
 			</Button>
 			<p class="mt-2 text-center text-caption text-neutral-500">
 				Live rear camera and narration stay active while you take photos.
