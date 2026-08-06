@@ -44,15 +44,15 @@
 		lastError: null,
 	});
 	let stopping = $state(false);
-	let captureInFlight = $state(0);
 	let flash = $state(false);
 	let captureError = $state('');
-	let inFlight = new Set<Promise<void>>();
+	let tapCount = $state(0);
+	let captureTail: Promise<unknown> = Promise.resolve();
 
-	const queue = new DurableCaptureQueue<CapturedFrame, void>({
+	const queue = new DurableCaptureQueue<Promise<CapturedFrame>, void>({
 		maxPending: 20,
-		persist: async (frame) => {
-			await oncapture(frame);
+		persist: async (framePromise) => {
+			await oncapture(await framePromise);
 		},
 		onSnapshot: (next) => {
 			queueSnapshot = next;
@@ -67,6 +67,8 @@
 	async function startSweep(): Promise<void> {
 		if (!video || snapshot.starting || snapshot.active) return;
 		captureError = '';
+		tapCount = 0;
+		captureTail = Promise.resolve();
 		session = new ContinuousCaptureSession(video, {
 			targetLongEdge: 3072,
 			jpegQuality: 0.9,
@@ -83,29 +85,32 @@
 	}
 
 	function shutter(): void {
-		if (!session || !snapshot.active || queueSnapshot.saturated || captureInFlight >= 4) return;
+		const current = session;
+		if (!current || !snapshot.active || queueSnapshot.saturated || stopping) return;
 		captureError = '';
-		captureInFlight += 1;
+		const captureSequence = tapCount;
+		const takenAtMs = Date.now();
+		const sessionOffsetMs = snapshot.elapsedMs;
+		tapCount += 1;
 		flash = true;
 		setTimeout(() => (flash = false), 90);
-		const task = session
-			.capture()
-			.then(async (frame) => {
-				await queue.enqueue(frame);
-			})
-			.catch((error) => {
-				captureError =
-					error instanceof Error ? error.message : 'Photo could not be captured or saved.';
-			})
-			.finally(() => {
-				captureInFlight = Math.max(0, captureInFlight - 1);
-				inFlight.delete(task);
-			});
-		inFlight.add(task);
+
+		const framePromise = captureTail
+			.then(() => current.capture())
+			.then((frame) => ({
+				...frame,
+				captureSequence,
+				takenAtMs,
+				sessionOffsetMs,
+			}));
+		captureTail = framePromise.catch(() => undefined);
+		void queue.enqueue(framePromise).catch((error) => {
+			captureError = error instanceof Error ? error.message : 'Photo could not be captured or saved.';
+		});
 	}
 
 	async function flush(): Promise<void> {
-		await Promise.allSettled([...inFlight]);
+		await captureTail;
 		await queue.flush();
 	}
 
@@ -113,9 +118,10 @@
 		if (!session || stopping) return;
 		stopping = true;
 		captureError = '';
+		const current = session;
 		try {
 			await flush();
-			const audio = await session.stop();
+			const audio = await current.stop();
 			if (audio) await onaudio(audio);
 			await onstop();
 		} catch (error) {
@@ -123,36 +129,38 @@
 			throw error;
 		} finally {
 			stopping = false;
-			session = null;
+			if (session === current) session = null;
 		}
 	}
 
-	async function stopWithoutAudio(): Promise<void> {
-		if (!session) return;
+	async function discardMediaOnly(): Promise<void> {
+		const current = session;
+		if (!current) return;
 		try {
-			await flush();
-		} catch {
-			// Navigation cleanup still stops media tracks; committed photos remain safe.
+			await current.stop();
+		} finally {
+			if (session === current) session = null;
 		}
-		await session.stop();
-		session = null;
 	}
 
 	async function toggleTorch(): Promise<void> {
-		if (!session) return;
-		await session.setTorch(!snapshot.torchEnabled);
+		if (session) await session.setTorch(!snapshot.torchEnabled);
 	}
 
 	function toggleMicrophone(): void {
-		if (!session || !snapshot.microphoneAvailable) return;
-		session.setMicrophoneMuted(!snapshot.microphoneMuted);
+		if (session && snapshot.microphoneAvailable) {
+			session.setMicrophoneMuted(!snapshot.microphoneMuted);
+		}
 	}
 
-	beforeNavigate(() => {
-		void stopWithoutAudio();
+	beforeNavigate((navigation) => {
+		if (!snapshot.active || stopping) return;
+		navigation.cancel();
+		captureError = 'Finishing and saving the active sweep. Navigate again when Stop completes.';
+		void finishSweep();
 	});
 	onDestroy(() => {
-		void stopWithoutAudio();
+		void discardMediaOnly();
 	});
 </script>
 
@@ -171,7 +179,7 @@
 				<span class="h-2 w-2 rounded-full bg-red-500"></span>
 				<span>{formatElapsed(snapshot.elapsedMs)}</span>
 				<span>·</span>
-				<span>{snapshot.capturedCount} photos</span>
+				<span>{tapCount} photos</span>
 				{#if queueSnapshot.pending > 0}<span>· {queueSnapshot.pending} saving</span>{/if}
 			</div>
 		{/if}
@@ -199,7 +207,7 @@
 			<button
 				class="mx-auto h-20 w-20 rounded-full border-[6px] border-neutral-100 bg-neutral-200 shadow-lg active:scale-95 disabled:opacity-40"
 				aria-label="Take photo"
-				disabled={queueSnapshot.saturated || captureInFlight >= 4 || stopping}
+				disabled={queueSnapshot.saturated || stopping}
 				onclick={shutter}
 			></button>
 			<Button variant="secondary" onclick={() => void finishSweep()} disabled={stopping}>
