@@ -1,5 +1,6 @@
 import { vision } from '$lib/api';
 import { bulkObserveV2, enrichBulkObservations } from '$lib/api/bulkObservationV2';
+import { patchCapturedPhotoTiming } from '$lib/services/bulkCaptureMetadata';
 import { replaceDetailedServerSpans } from '$lib/services/bulkDetailedTranscriptDb';
 import * as bulkMissionDb from '$lib/services/bulkMissionDb';
 import type { BulkAudioSegment } from '$lib/types';
@@ -237,13 +238,18 @@ async function runAudioTranscription(segmentId: string): Promise<void> {
 		});
 		if (!committed.committed || !currentIdentity(identity)) return;
 
-		await replaceDetailedServerSpans({
-			missionId: identity.missionId,
-			audioSegmentId: segmentId,
-			audioStartMs: attempt.record.startedAtMs,
-			audioEndMs: attempt.record.endedAtMs,
-			segments: result.segments ?? [],
-		});
+		try {
+			await replaceDetailedServerSpans({
+				missionId: identity.missionId,
+				audioSegmentId: segmentId,
+				audioStartMs: attempt.record.startedAtMs,
+				audioEndMs: attempt.record.endedAtMs,
+				segments: result.segments ?? [],
+			});
+		} catch {
+			// The aggregate canonical span is already durable. Detailed timing can safely fall back.
+			log.warn('Detailed transcript spans could not be persisted; using canonical aggregate span');
+		}
 		await resynchronizeCurrentMission(identity);
 	} catch (error) {
 		const structured = safeTranscriptionError(error);
@@ -281,6 +287,7 @@ const extendedWorkflow = baseWorkflow as typeof baseWorkflow & {
 	addCapturedFrame(frame: CapturedFrame): Promise<void>;
 };
 extendedWorkflow.addCapturedFrame = async (frame: CapturedFrame): Promise<void> => {
+	const identity = baseWorkflow.getMissionIdentity();
 	const before = new Set(baseWorkflow.state.photos.map((photo) => photo.id));
 	const file = new File(
 		[frame.blob],
@@ -288,11 +295,17 @@ extendedWorkflow.addCapturedFrame = async (frame: CapturedFrame): Promise<void> 
 		{ type: frame.mimeType || 'image/jpeg' }
 	);
 	await baseWorkflow.addPhotos([file]);
+	if (!currentIdentity(identity)) return;
 	const added = baseWorkflow.state.photos.find((photo) => !before.has(photo.id));
 	if (!added) throw new Error('Captured photo was not published after durable save');
-	await baseWorkflow.updatePhoto(added.id, {
-		takenAtMs: frame.takenAtMs,
-		sessionOffsetMs: frame.sessionOffsetMs,
+	await patchCapturedPhotoTiming({
+		missionId: identity.missionId,
+		photoId: added.id,
+		metadata: {
+			captureSequence: frame.captureSequence,
+			takenAtMs: frame.takenAtMs,
+			sessionOffsetMs: frame.sessionOffsetMs,
+		},
 	});
 };
 
