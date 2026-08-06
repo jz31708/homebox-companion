@@ -6,113 +6,10 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  patch:
-    if: ${{ hashFiles('.capture-shared-trigger') != '' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: fix/final-apartment-ingestion-audit
-          fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.14'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - name: Apply bounded integration patch
-        run: python scripts/apply_shared_capture_integration.py
-      - name: Install, format and validate
-        working-directory: frontend
-        run: |
-          npm install --no-audit --no-fund
-          npx prettier --write src/lib/types/index.ts src/lib/workflows/bulkSweepBase.svelte.ts src/routes/bulk-capture/+page.svelte src/lib/components/BulkContinuousCapture.svelte src/lib/services/bulkAnalysisPlanner.ts src/lib/shared/ingestionCaptureCore.ts
-          npm run check
-          npm run lint
-          npm run build
-      - name: Restore read-only validation workflow and remove temporary files
-        run: |
-          rm -f .capture-shared-trigger scripts/apply_shared_capture_integration.py .github/workflows/apply-shared-capture.yml
-          cat > .github/workflows/phase2-validation.yml <<'YAML'
-          name: Phase 2 validation
-
-          on:
-            pull_request:
-              branches: [main]
-            workflow_dispatch:
-
-          permissions:
-            contents: read
-
-          jobs:
-            backend:
-              runs-on: ubuntu-latest
-              steps:
-                - uses: actions/checkout@v4
-                - uses: actions/setup-python@v5
-                  with:
-                    python-version: '3.14'
-                - uses: astral-sh/setup-uv@v6
-                  with:
-                    enable-cache: true
-                - name: Sync backend dependencies
-                  run: uv sync --dev
-                - name: Ruff
-                  run: uv run ruff check .
-                - name: Type check
-                  run: uv run ty check src server tests
-                - name: Focused narration backend tests
-                  run: uv run pytest tests/test_audio_transcription.py tests/test_transcription_provider.py -q
-                - name: Complete backend tests
-                  run: uv run pytest -q
-
-            frontend:
-              runs-on: ubuntu-latest
-              defaults:
-                run:
-                  working-directory: frontend
-              steps:
-                - uses: actions/checkout@v4
-                - uses: actions/setup-node@v4
-                  with:
-                    node-version: '24'
-                    cache: npm
-                    cache-dependency-path: frontend/package-lock.json
-                - name: Install frontend dependencies
-                  run: npm install --no-audit --no-fund
-                - name: Svelte and TypeScript check
-                  run: npm run check
-                - name: ESLint
-                  run: npm run lint
-                - name: Production build
-                  run: npm run build
-                - name: Install Playwright Chromium
-                  run: npx playwright install --with-deps chromium
-                - name: Auth bootstrap gate
-                  run: npx playwright test e2e/auth-bootstrap.spec.ts --config=playwright.config.ts --workers=1
-                - name: Phase 1 persistence gate
-                  run: npx playwright test e2e/phase1-persistence-regressions.spec.ts --config=playwright.config.ts --workers=1
-                - name: Phase 2 narration gate
-                  run: npx playwright test e2e/phase2-narration.spec.ts --config=playwright.config.ts --workers=1
-                - name: Complete managed E2E suite
-                  run: npm run e2e:managed:serial
-          YAML
-      - name: Commit integrated capture flow
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "feat: unify rapid camera and narration capture"
-          git push origin HEAD:fix/final-apartment-ingestion-audit
-
   backend:
-    needs: patch
-    if: ${{ always() && (needs.patch.result == 'success' || needs.patch.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -134,8 +31,6 @@ jobs:
         run: uv run pytest -q
 
   frontend:
-    needs: patch
-    if: ${{ always() && (needs.patch.result == 'success' || needs.patch.result == 'skipped') }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -155,3 +50,13 @@ jobs:
         run: npm run lint
       - name: Production build
         run: npm run build
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Auth bootstrap gate
+        run: npx playwright test e2e/auth-bootstrap.spec.ts --config=playwright.config.ts --workers=1
+      - name: Phase 1 persistence gate
+        run: npx playwright test e2e/phase1-persistence-regressions.spec.ts --config=playwright.config.ts --workers=1
+      - name: Phase 2 narration gate
+        run: npx playwright test e2e/phase2-narration.spec.ts --config=playwright.config.ts --workers=1
+      - name: Complete managed E2E suite
+        run: npm run e2e:managed:serial
