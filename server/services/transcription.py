@@ -13,10 +13,18 @@ from homebox_companion.core.config import Settings
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderTranscriptSegment:
+    text: str
+    start_offset_ms: int
+    end_offset_ms: int
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderTranscript:
     text: str
     start_offset_ms: int | None = None
     end_offset_ms: int | None = None
+    segments: tuple[ProviderTranscriptSegment, ...] = ()
 
 
 class TranscriptionProviderError(Exception):
@@ -72,8 +80,8 @@ class OpenAICompatibleTranscriptionProvider:
             raise TranscriptionProviderMalformedResponse("Transcription provider returned invalid JSON") from error
         if not isinstance(payload, dict) or not isinstance(payload.get("text"), str) or not payload["text"].strip():
             raise TranscriptionProviderMalformedResponse("Transcription provider returned invalid transcript text")
-        starts: list[float] = []
-        ends: list[float] = []
+
+        detailed: list[ProviderTranscriptSegment] = []
         segments = payload.get("segments")
         if segments is not None:
             if not isinstance(segments, list):
@@ -81,17 +89,29 @@ class OpenAICompatibleTranscriptionProvider:
             for segment in segments:
                 if not isinstance(segment, dict):
                     raise TranscriptionProviderMalformedResponse("Transcription provider returned invalid segments")
-                start, end = segment.get("start"), segment.get("end")
+                start, end, text = segment.get("start"), segment.get("end"), segment.get("text")
                 if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
                     continue
                 if not math.isfinite(start) or not math.isfinite(end) or start < 0 or end < start:
                     raise TranscriptionProviderMalformedResponse("Transcription provider returned invalid offsets")
-                starts.append(float(start))
-                ends.append(float(end))
+                normalized_text = text.strip() if isinstance(text, str) else ""
+                if not normalized_text:
+                    continue
+                detailed.append(
+                    ProviderTranscriptSegment(
+                        text=normalized_text,
+                        start_offset_ms=round(float(start) * 1000),
+                        end_offset_ms=round(float(end) * 1000),
+                    )
+                )
+
+        starts = [segment.start_offset_ms for segment in detailed]
+        ends = [segment.end_offset_ms for segment in detailed]
         return ProviderTranscript(
             text=payload["text"].strip(),
-            start_offset_ms=round(min(starts) * 1000) if starts else None,
-            end_offset_ms=round(max(ends) * 1000) if ends else None,
+            start_offset_ms=min(starts) if starts else None,
+            end_offset_ms=max(ends) if ends else None,
+            segments=tuple(detailed),
         )
 
 
