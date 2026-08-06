@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { beforeNavigate } from '$app/navigation';
 	import { onDestroy } from 'svelte';
-	import { Camera, CameraOff, Mic, MicOff, Zap } from 'lucide-svelte';
+	import { Camera, CameraOff, Mic, MicOff, RotateCcw, Zap } from 'lucide-svelte';
 	import Button from '$lib/components/Button.svelte';
 	import {
 		ContinuousCaptureSession,
@@ -44,9 +44,11 @@
 		lastError: null,
 	});
 	let stopping = $state(false);
+	let retryingFailed = $state(false);
 	let flash = $state(false);
 	let captureError = $state('');
 	let tapCount = $state(0);
+	let failedFrames = $state<CapturedFrame[]>([]);
 	let captureTail: Promise<unknown> = Promise.resolve();
 
 	const queue = new DurableCaptureQueue<Promise<CapturedFrame>, void>({
@@ -68,6 +70,7 @@
 		if (!video || snapshot.starting || snapshot.active) return;
 		captureError = '';
 		tapCount = 0;
+		failedFrames = [];
 		captureTail = Promise.resolve();
 		session = new ContinuousCaptureSession(video, {
 			targetLongEdge: 3072,
@@ -82,6 +85,24 @@
 		} catch (error) {
 			captureError = error instanceof Error ? error.message : 'Camera unavailable.';
 		}
+	}
+
+	function rememberFailedFrame(frame: CapturedFrame): void {
+		if (failedFrames.some((entry) => entry.id === frame.id)) return;
+		failedFrames = [...failedFrames, frame].sort(
+			(a, b) => a.captureSequence - b.captureSequence
+		);
+	}
+
+	function persistFrame(framePromise: Promise<CapturedFrame>): void {
+		void queue.enqueue(framePromise).catch(async (error) => {
+			try {
+				rememberFailedFrame(await framePromise);
+			} catch {
+				// Extraction failure has no usable frame to retry.
+			}
+			captureError = error instanceof Error ? error.message : 'Photo could not be captured or saved.';
+		});
 	}
 
 	function shutter(): void {
@@ -104,14 +125,37 @@
 				sessionOffsetMs,
 			}));
 		captureTail = framePromise.catch(() => undefined);
-		void queue.enqueue(framePromise).catch((error) => {
-			captureError = error instanceof Error ? error.message : 'Photo could not be captured or saved.';
-		});
+		persistFrame(framePromise);
+	}
+
+	async function retryFailedSaves(): Promise<void> {
+		if (retryingFailed || failedFrames.length === 0) return;
+		retryingFailed = true;
+		captureError = '';
+		const retrying = [...failedFrames];
+		const stillFailed: CapturedFrame[] = [];
+		for (const frame of retrying) {
+			try {
+				await queue.enqueue(Promise.resolve(frame));
+			} catch (error) {
+				stillFailed.push(frame);
+				captureError =
+					error instanceof Error ? error.message : 'Photo could not be saved on retry.';
+			}
+		}
+		failedFrames = stillFailed;
+		if (stillFailed.length === 0) captureError = '';
+		retryingFailed = false;
 	}
 
 	async function flush(): Promise<void> {
 		await captureTail;
 		await queue.flush();
+		if (failedFrames.length > 0) {
+			throw new Error(
+				`${failedFrames.length} captured photo${failedFrames.length === 1 ? '' : 's'} still need saving. Retry before continuing.`
+			);
+		}
 	}
 
 	export async function finishSweep(): Promise<void> {
@@ -129,7 +173,7 @@
 			throw error;
 		} finally {
 			stopping = false;
-			if (session === current) session = null;
+			if (!captureError && session === current) session = null;
 		}
 	}
 
@@ -181,6 +225,7 @@
 				<span>·</span>
 				<span>{tapCount} photos</span>
 				{#if queueSnapshot.pending > 0}<span>· {queueSnapshot.pending} saving</span>{/if}
+				{#if failedFrames.length > 0}<span>· {failedFrames.length} failed</span>{/if}
 			</div>
 		{/if}
 	</div>
@@ -215,6 +260,14 @@
 				<span class="hidden sm:inline">Stop</span>
 			</Button>
 		</div>
+		{#if failedFrames.length > 0}
+			<div class="px-3 pb-3">
+				<Button variant="secondary" full onclick={retryFailedSaves} disabled={retryingFailed}>
+					<RotateCcw size={16} />
+					{retryingFailed ? 'Retrying saves…' : `Retry ${failedFrames.length} failed save${failedFrames.length === 1 ? '' : 's'}`}
+				</Button>
+			</div>
+		{/if}
 		<div class="px-3 pb-3 text-center text-caption text-neutral-400">
 			{#if snapshot.microphoneAvailable}
 				{snapshot.microphoneMuted ? 'Microphone muted' : 'Camera and narration are recording together'}
