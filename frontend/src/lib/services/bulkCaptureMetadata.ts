@@ -58,6 +58,21 @@ export async function patchCapturedPhotoTiming(input: {
 	const transaction = db.transaction(['photos', 'missions'], 'readwrite');
 	const done = transactionDone(transaction);
 	try {
+		const missions = transaction.objectStore('missions');
+		const mission = (await requestResult(missions.get(input.missionId))) as
+			| Record<string, unknown>
+			| undefined;
+		if (!mission) throw new Error('Bulk mission is not durable');
+		const missionStartedAtMs = Number(mission.startedAtMs ?? input.metadata.takenAtMs);
+		const missionRelativeOffsetMs = Math.max(
+			0,
+			input.metadata.takenAtMs - missionStartedAtMs
+		);
+		const normalizedMetadata: ExactCaptureMetadata = {
+			...input.metadata,
+			sessionOffsetMs: missionRelativeOffsetMs,
+		};
+
 		const photos = transaction.objectStore('photos');
 		const record = (await requestResult(photos.get(photoKey(input.missionId, input.photoId)))) as
 			| Record<string, unknown>
@@ -68,20 +83,15 @@ export async function patchCapturedPhotoTiming(input: {
 		photos.put(
 			{
 				...record,
-				takenAtMs: input.metadata.takenAtMs,
-				sessionOffsetMs: input.metadata.sessionOffsetMs,
-				captureSequence: input.metadata.captureSequence,
+				takenAtMs: normalizedMetadata.takenAtMs,
+				sessionOffsetMs: normalizedMetadata.sessionOffsetMs,
+				captureSequence: normalizedMetadata.captureSequence,
 			},
 			photoKey(input.missionId, input.photoId)
 		);
-		const missions = transaction.objectStore('missions');
-		const mission = (await requestResult(missions.get(input.missionId))) as
-			| Record<string, unknown>
-			| undefined;
-		if (!mission) throw new Error('Bulk mission is not durable');
 		const nextSequence = Math.max(
 			Number(mission.nextCaptureSequence ?? 0),
-			input.metadata.captureSequence + 1
+			normalizedMetadata.captureSequence + 1
 		);
 		missions.put(
 			{
@@ -92,7 +102,7 @@ export async function patchCapturedPhotoTiming(input: {
 			input.missionId
 		);
 		await done;
-		activeMetadata.set(input.photoId, input.metadata);
+		activeMetadata.set(input.photoId, normalizedMetadata);
 	} catch (error) {
 		try {
 			transaction.abort();
