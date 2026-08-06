@@ -1,4 +1,5 @@
 import type { BulkCapturedPhoto, BulkTranscriptSpan } from '$lib/types';
+import { captureMetadataFor } from '$lib/services/bulkCaptureMetadata';
 import {
 	planTimelineChunks,
 	type PlannedTimelineChunk,
@@ -38,16 +39,19 @@ export function planBulkObservationChunks(
 	);
 	const plans = planTimelineChunks(
 		missionId,
-		photos.map((photo, index) => ({
-			id: photo.id,
-			index,
-			captureSequence: index,
-			takenAtMs: photo.takenAtMs ?? null,
-			sessionOffsetMs: photo.sessionOffsetMs,
-			note: photo.note,
-			groupLabel: photo.groupLabel,
-			ignored: photo.ignored,
-		})),
+		photos.map((photo, index) => {
+			const metadata = captureMetadataFor(photo.id);
+			return {
+				id: photo.id,
+				index,
+				captureSequence: metadata?.captureSequence ?? index,
+				takenAtMs: metadata?.takenAtMs ?? photo.takenAtMs ?? null,
+				sessionOffsetMs: metadata?.sessionOffsetMs ?? photo.sessionOffsetMs,
+				note: photo.note,
+				groupLabel: photo.groupLabel,
+				ignored: photo.ignored,
+			};
+		}),
 		contextSpans.map((span) => ({
 			id: span.id,
 			text: span.text,
