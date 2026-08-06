@@ -1,0 +1,45 @@
+You are repairing `jz31708/homebox-companion` after an independent audit found that phases 0–11 were marked complete even though several critical production paths are broken or not wired.
+
+Your goal is not to preserve the previous completion claims. Your goal is to make the apartment-ingestion product genuinely correct, safe, durable, mergeable, deployable, and ready for a physical phone pilot.
+
+Repository facts at audit time:
+- current `main`: `2c2ac9d305e03bafdd2866bee9d9bb78a2172d0f`
+- audited implementation branch: `feature/final-apartment-ingestion`
+- audited branch head: `ffcbf7edc39ede0277acd22ffce4f44e56d89eaa`
+- deployed code commit: `76a3b921d5646cd25d4f986a206eb6ee259c2190`
+- deployed image digest recorded as `sha256:3a2bb3de06ad04f7ac9534faab98671568ee91af6ec088cb7982af734d31df59`
+- the branch is 23 commits ahead of and 1 commit behind `main`, with stale ancestry.
+
+The previous phase reports are not evidence. Read the actual code, reproduce every defect, implement the correction, and add tests that fail on the audited implementation and pass only after the real behavior is fixed.
+
+Read in this order:
+1. `00_START_HERE.md`
+2. `01_AUDIT_VERDICT.md`
+3. `02_BLOCKING_FINDINGS.md`
+4. `03_PHASE_GATE_REOPEN_MATRIX.md`
+5. `04_REQUIRED_FINAL_ARCHITECTURE.md`
+6. `05_FILE_LEVEL_REMEDIATION.md`
+7. `06_REQUIRED_TEST_MATRIX.md`
+8. `07_DEPLOYMENT_ROLLBACK_AND_REACCEPTANCE.md`
+9. `08_FINAL_CERTIFICATION_STANDARD.md`
+10. `REMEDIATION_STATE.yaml`
+11. `codex/00_MASTER_OPERATING_INSTRUCTIONS.md`
+12. the prompt for the current remediation phase.
+
+Non-negotiable final outcomes:
+- the branch is cleanly based on current `origin/main` and has a reviewable PR;
+- the continuous camera actually starts on a supported phone/browser;
+- server transcription is authenticated, configured through a real existing setting, and exercised end-to-end without browser SpeechRecognition;
+- the frontend uses the final observe -> persist -> fuse architecture, not legacy `/bulk-detect`;
+- no positional photo evidence, fake confidence, or normalized-name quantity summing remains in the maintained path;
+- completed observation chunks retain their candidates after reload and failed-chunk retry;
+- all candidate fields, transcript edits, timestamps, duplicate decisions, correction history, payload snapshots, attachment states, and Homebox IDs survive reload;
+- selected Homebox location/parent is always mapped correctly;
+- blocked or unresolved candidates cannot be accepted or submitted, including through batch actions;
+- merge and split preserve explicit quantity basis and evidence ownership;
+- per-candidate submission is server-hashed and idempotent, preserves extended/custom fields, records expected attachments, reconciles partial work, and never declares a partial mission complete;
+- Classic Capture and Medicine Intake remain correct;
+- deployment acceptance is rerun against the corrected commit and image;
+- the project is not called final until the physical phone pilot passes.
+
+Do not weaken requirements, delete failing tests, mark phases complete based on scaffolding, or treat route HTTP 200 as product acceptance. The implementation is correct only when the exact failure cases in this pack are demonstrated to pass.

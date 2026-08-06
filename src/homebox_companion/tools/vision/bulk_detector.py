@@ -137,12 +137,12 @@ async def detect_bulk_sweep(
                 name=item.name,
                 quantity=item.quantity,
                 description=item.description,
-                tag_ids=item.tag_ids,
+                tag_ids=item.tag_ids,  # ty: ignore[unknown-argument]
                 manufacturer=item.manufacturer,
-                model_number=item.model_number,
-                serial_number=item.serial_number,
-                purchase_price=item.purchase_price,
-                purchase_from=item.purchase_from,
+                model_number=item.model_number,  # ty: ignore[unknown-argument]
+                serial_number=item.serial_number,  # ty: ignore[unknown-argument]
+                purchase_price=item.purchase_price,  # ty: ignore[unknown-argument]
+                purchase_from=item.purchase_from,  # ty: ignore[unknown-argument]
                 notes=item.notes,
                 custom_fields=get_custom_fields_dict(item, custom_fields),
                 confidence=0.75,

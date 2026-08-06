@@ -9,6 +9,7 @@
 		full?: boolean;
 		type?: 'button' | 'submit' | 'reset';
 		onclick?: () => void;
+		ariaBusy?: boolean;
 		children: Snippet;
 	}
 
@@ -20,6 +21,7 @@
 		full = false,
 		type = 'button',
 		onclick,
+		ariaBusy = false,
 		children,
 	}: Props = $props();
 
@@ -100,6 +102,7 @@
 </script>
 
 <button
+	aria-busy={ariaBusy}
 	{type}
 	onclick={handleClick}
 	ontouchend={handleTouchEnd}

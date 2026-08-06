@@ -1,0 +1,63 @@
+schema_version: 1
+project: homebox-companion-phase11-remediation
+repository: jz31708/homebox-companion
+audited_branch: feature/final-apartment-ingestion
+audited_branch_head: ffcbf7edc39ede0277acd22ffce4f44e56d89eaa
+audited_deployed_commit: 76a3b921d5646cd25d4f986a206eb6ee259c2190
+audited_main: 2c2ac9d305e03bafdd2866bee9d9bb78a2172d0f
+verdict: fail
+physical_pilot: blocked
+canonical_ledger: ../PHASE_STATE.yaml
+ledger_sync_rule: PHASE_STATE.yaml and this file must have identical phase statuses; root PHASE_STATE.yaml is canonical.
+
+rules:
+  one_phase_per_pass: true
+  independent_review_required: true
+  no_self_certification: true
+  no_test_weakening: true
+  redeployment_required: true
+
+phases:
+  - id: 0
+    name: branch-truth-and-runtime-containment
+    status: complete
+    prompt: codex/01_BRANCH_TRUTH_AND_CONTAINMENT.md
+  - id: 1
+    name: camera-context-and-lossless-persistence
+    status: complete
+    prompt: codex/02_CAMERA_CONTEXT_PERSISTENCE.md
+    evidence: frontend/src/lib/components/BulkCameraCapture.svelte, frontend/src/lib/services/bulkMissionDb.ts, frontend/src/lib/workflows/bulkSweep.svelte.ts, frontend/e2e/bulk-persistence.spec.ts
+  - id: 2
+    name: narration-security-and-runtime
+    status: in_progress
+    prompt: codex/03_NARRATION_SECURITY_RUNTIME.md
+    evidence: server/api/tools/audio.py, server/api/tools/audio_auth.py, server/services/transcription.py, src/homebox_companion/core/config.py, frontend/src/lib/api/vision.ts, frontend/src/lib/services/bulkMissionDb.ts, frontend/src/lib/workflows/bulkSweepBase.svelte.ts, frontend/src/lib/workflows/bulkSweep.svelte.ts, frontend/src/routes/bulk-capture/+page.svelte, frontend/e2e/phase2-narration.spec.ts, tests/test_audio_transcription.py, tests/test_transcription_provider.py, docs/audio-transcription.md
+  - id: 3
+    name: observation-and-fusion-production-path
+    status: changes_requested
+    prompt: codex/04_OBSERVE_FUSE_PIPELINE.md
+    evidence: frontend/src/lib/api/vision.ts, frontend/src/lib/workflows/bulkSweep.svelte.ts, frontend/e2e/bulk-persistence.spec.ts, tests/test_bulk_fusion.py, tests/test_bulk_observation.py
+  - id: 4
+    name: review-and-candidate-fidelity
+    status: changes_requested
+    prompt: codex/05_REVIEW_CANDIDATE_FIDELITY.md
+    evidence: frontend/src/lib/workflows/bulkSweep.svelte.ts, frontend/src/routes/bulk-review/+page.svelte, frontend/e2e/bulk-persistence.spec.ts
+  - id: 5
+    name: submission-idempotency-and-recovery
+    status: changes_requested
+    prompt: codex/06_SUBMISSION_IDEMPOTENCY.md
+    evidence: src/homebox_companion/tools/vision/bulk_submission.py, server/api/items.py, frontend/src/lib/workflows/bulkSweep.svelte.ts, tests/test_bulk_submission.py
+  - id: 6
+    name: automated-validation-and-independent-audit
+    status: changes_requested
+    prompt: codex/07_VALIDATION_AUDIT.md
+    evidence: tests, frontend/e2e/bulk-persistence.spec.ts, docs/plans/active/apartment-ingestion-audit-remediation.md
+  - id: 7
+    name: redeploy-and-disposable-reacceptance
+    status: changes_requested
+    prompt: codex/08_REDEPLOY_REACCEPT.md
+    evidence: runtime-redeploy-2026-07-25.md, ../docs/plans/active/apartment-ingestion-audit-remediation.md
+  - id: 8
+    name: physical-pilot-closeout
+    status: blocked
+    prompt: codex/09_PHYSICAL_PILOT.md

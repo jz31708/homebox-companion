@@ -1,3 +1,11 @@
+import type {
+	BulkCandidateRecord,
+	BulkDuplicateMatchRecord,
+	BulkDuplicateResolutionRecord,
+	BulkOutboxOperationRecord,
+	BulkStructuredError,
+} from './bulkDomain';
+
 /**
  * Consolidated type definitions for Homebox Companion
  *
@@ -154,11 +162,7 @@ export type ScanStatus =
 
 /** Status of individual item submission */
 export type ItemSubmissionStatus =
-	| 'pending'
-	| 'creating'
-	| 'success'
-	| 'partial_success'
-	| 'failed';
+	'pending' | 'creating' | 'success' | 'partial_success' | 'failed';
 
 /** Status of individual image analysis */
 export type ImageAnalysisStatus = 'pending' | 'analyzing' | 'success' | 'failed';
@@ -221,7 +225,7 @@ export interface ScanState {
 
 export type BulkTranscriptSource = 'none' | 'live' | 'server' | 'manual' | 'mixed';
 export type BulkTranscriptStatus = 'pending' | 'transcribing' | 'done' | 'failed';
-export type BulkCandidateStatus = 'pending' | 'accepted' | 'rejected' | 'needs_review';
+export type BulkCandidateStatus = BulkCandidateRecord['state'];
 
 export type BulkSweepStatus =
 	| 'idle'
@@ -252,6 +256,13 @@ export interface BulkAudioSegment {
 	transcript?: string;
 	rawTranscript?: string;
 	transcriptStatus: BulkTranscriptStatus;
+	status?: 'recording' | 'persisted' | 'transcribing' | 'done' | 'failed' | 'ignored';
+	source?: 'server' | 'live_preview' | 'manual';
+	error?: BulkStructuredError | null;
+	retryCount?: number;
+	byteSize?: number;
+	activeAttemptId?: string | null;
+	activeAttemptStartedAtMs?: number | null;
 }
 
 export interface BulkTranscriptSpan {
@@ -260,6 +271,10 @@ export interface BulkTranscriptSpan {
 	startMs?: number;
 	endMs?: number;
 	sourceAudioSegmentId?: string;
+	startOffsetMs?: number | null;
+	endOffsetMs?: number | null;
+	source?: 'server' | 'live_preview' | 'manual';
+	canonical?: boolean;
 }
 
 export interface BulkEvidenceRef {
@@ -273,15 +288,29 @@ export interface BulkEvidenceRef {
 export interface BulkCandidateItem extends ItemCore, ItemExtended {
 	id: string;
 	custom_fields?: Record<string, string> | null;
-	confidence: number;
+	/** Legacy display field; runtime mappers omit it when the server provides no finite value. */
+	confidence?: number;
 	status: BulkCandidateStatus;
 	evidence: BulkEvidenceRef[];
 	sourcePhotoIds: string[];
 	uncertaintyReasons: string[];
 	duplicateCandidateIds: string[];
 	duplicateExistingItemId?: string | null;
+	reviewTier?: 'ready' | 'attention' | 'blocked';
+	entityMode?: 'individual' | 'grouped' | 'kit';
+	quantityBasis?:
+		'explicit_count' | 'distinct_entities' | 'pack_size' | 'user_confirmed' | 'unknown';
+	sourceObservationIds?: string[];
+	evidenceTranscriptSpanIds?: string[];
+	blockerCodes?: string[];
+	warningCodes?: string[];
+	duplicateMatches?: BulkDuplicateMatchRecord[];
+	duplicateResolution?: BulkDuplicateResolutionRecord | null;
+	createdHomeboxItemId?: string | null;
 	suggestedAction: 'accept' | 'review' | 'reject' | 'merge';
 	originalFiles?: File[];
+	correctionHistory?: Array<{ atMs: number; fields: string[] }>;
+	payloadSnapshot?: Record<string, unknown> | null;
 	compressedDataUrls?: string[];
 }
 
@@ -303,6 +332,7 @@ export interface BulkSweepState {
 	locationId: string | null;
 	locationName: string | null;
 	locationPath: string | null;
+	areaLabel: string | null;
 	parentItemId: string | null;
 	parentItemName: string | null;
 	startedAtMs: number | null;
@@ -310,11 +340,13 @@ export interface BulkSweepState {
 	audioSegments: BulkAudioSegment[];
 	transcriptSpans: BulkTranscriptSpan[];
 	rawTranscriptText: string;
+	canonicalTranscriptText: string;
 	interimTranscriptText: string;
 	editedTranscriptText: string;
 	transcriptEdited: boolean;
 	transcriptSource: BulkTranscriptSource;
 	candidates: BulkCandidateItem[];
+	outboxOperations: BulkOutboxOperationRecord[];
 	analysisProgress: Progress | null;
 	submissionProgress: Progress | null;
 	error: string | null;
@@ -324,19 +356,10 @@ export interface BulkSweepState {
 
 export type MedicinePhotoKind = 'front' | 'barcode' | 'expiry' | 'doses' | 'notice' | 'other';
 export type MedicineIntakeStatus =
-	| 'idle'
-	| 'capturing'
-	| 'analyzing'
-	| 'reviewing'
-	| 'submitting'
-	| 'complete';
+	'idle' | 'capturing' | 'analyzing' | 'reviewing' | 'submitting' | 'complete';
 
 export type MedicineMissionKind =
-	| 'medicine_intake'
-	| 'room_sweep'
-	| 'single_item'
-	| 'pack_travel'
-	| 'find_homebox';
+	'medicine_intake' | 'room_sweep' | 'single_item' | 'pack_travel' | 'find_homebox';
 
 export type MedicineCandidateState =
 	| 'captured'

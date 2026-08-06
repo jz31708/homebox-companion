@@ -20,13 +20,18 @@ from homebox_companion import (
 from homebox_companion import (
     correct_item as llm_correct_item,
 )
+from homebox_companion.tools.vision.bulk_contracts import Candidate
 from homebox_companion.tools.vision.bulk_detector import detect_bulk_sweep
+from homebox_companion.tools.vision.bulk_fusion import fuse_observations
 from homebox_companion.tools.vision.bulk_models import (
     BulkDetectResponse,
+    BulkObservation,
+    BulkObservationResponse,
     BulkPhotoMeta,
     BulkStats,
     BulkTranscriptSpan,
 )
+from homebox_companion.tools.vision.bulk_observation import validate_observation_evidence
 from homebox_companion.tools.vision.medicine_detector import detect_medicine, lookup_medicine_barcode
 from homebox_companion.tools.vision.medicine_models import (
     MedicineDetectResponse,
@@ -57,6 +62,21 @@ from ...schemas.vision import (
 from ...services.duplicate_checker import DuplicateChecker
 
 router = APIRouter()
+
+
+@router.post("/bulk-fuse", response_model=list[Candidate])
+async def bulk_fuse(payload: dict[str, object]) -> list[Candidate]:
+    """Fuse persisted observations using conservative, evidence-first rules."""
+    mission_id = str(payload.get("missionId") or "mission")
+    observations = payload.get("observations")
+    if not isinstance(observations, list) or not observations:
+        raise HTTPException(status_code=400, detail="At least one observation is required")
+    transcript = str(payload.get("transcript") or "")
+    existing = payload.get("existingItems")
+    existing_items = existing if isinstance(existing, list) else []
+    allowed = payload.get("allowedTagIds")
+    allowed_tag_ids = {str(tag) for tag in allowed} if isinstance(allowed, list) else None
+    return fuse_observations(mission_id, observations, transcript, existing_items, allowed_tag_ids)
 
 
 # Limit concurrent CPU-intensive compression to available cores.
@@ -335,7 +355,12 @@ async def bulk_detect(
         raise HTTPException(status_code=400, detail="Invalid Bulk Sweep JSON metadata") from e
 
     photo_meta_all = [BulkPhotoMeta.model_validate(photo) for photo in meta.get("photos", [])]
-    active_meta = [photo for photo in photo_meta_all if not photo.ignored]
+    requested_photo_ids = {str(photo_id) for photo_id in meta.get("photoIds", [])}
+    active_meta = [
+        photo
+        for photo in photo_meta_all
+        if not photo.ignored and (not requested_photo_ids or photo.id in requested_photo_ids)
+    ]
     spans = [BulkTranscriptSpan.model_validate(span) for span in span_data]
 
     if len(images) != len(active_meta):
@@ -376,6 +401,60 @@ async def bulk_detect(
             candidate_count=len(candidates),
             low_confidence_count=low_confidence,
         ),
+    )
+
+
+@router.post("/bulk-observe", response_model=BulkObservationResponse)
+async def bulk_observe(
+    images: Annotated[list[UploadFile], File(description="One resumable Bulk Sweep photo chunk")],
+    session_meta: Annotated[str, Form(description="Chunk metadata with explicit photo IDs")],
+    transcript_spans: Annotated[str, Form(description="JSON transcript spans")] = "[]",
+    edited_transcript: Annotated[str, Form(description="User-edited transcript")] = "",
+    ctx: Annotated[VisionContext, Depends(get_vision_context)] = None,  # type: ignore[assignment]
+    api_key: Annotated[str, Depends(require_llm_configured)] = "",  # noqa: ARG001
+) -> BulkObservationResponse:
+    """Observe one explicit photo chunk; callers persist and retry it independently."""
+    try:
+        meta = json.loads(session_meta)
+        span_data = json.loads(transcript_spans or "[]")
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Invalid observation metadata") from exc
+    requested_ids = [str(photo_id) for photo_id in meta.get("photoIds", [])]
+    if not requested_ids or len(images) != len(requested_ids):
+        raise HTTPException(status_code=400, detail="Observation images must match explicit photo IDs")
+    photos = [
+        BulkPhotoMeta(id=photo_id, index=index, sessionOffsetMs=None) for index, photo_id in enumerate(requested_ids)
+    ]
+    validated_images = await validate_files_size(images)
+    image_data = [(photo, raw, mime) for photo, (raw, mime) in zip(photos, validated_images, strict=True)]
+    candidates = await detect_bulk_sweep(
+        image_data,
+        transcript_spans=[BulkTranscriptSpan.model_validate(span) for span in span_data],
+        edited_transcript=(edited_transcript or "")[: settings.bulk_max_transcript_chars],
+        tags=ctx.tags,
+        field_preferences=ctx.field_preferences,
+        output_language=ctx.output_language,
+        custom_fields=ctx.custom_fields,
+        chunk_size=max(6, min(8, len(images))),
+    )
+    observations_data = [
+        {
+            "id": candidate.id,
+            "name": candidate.name,
+            "photoIds": candidate.sourcePhotoIds,
+            "transcriptSpanIds": [ref.transcriptSpanId for ref in candidate.evidence if ref.transcriptSpanId],
+            "evidence": [ref.model_dump() for ref in candidate.evidence],
+        }
+        for candidate in candidates
+    ]
+    warnings = validate_observation_evidence(
+        observations_data, set(requested_ids), {str(span.get("id")) for span in span_data}
+    )
+    return BulkObservationResponse(
+        chunkId=str(meta.get("chunkId") or "unknown"),
+        photoIds=requested_ids,
+        observations=[BulkObservation.model_validate(observation) for observation in observations_data],
+        warnings=warnings,
     )
 
 

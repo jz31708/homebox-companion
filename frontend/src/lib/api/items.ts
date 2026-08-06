@@ -16,6 +16,13 @@ export interface UploadOptions {
 	signal?: AbortSignal;
 }
 
+export interface BulkSubmissionResponse {
+	status: 'complete' | 'attachments_partial' | 'failed';
+	candidateId: string;
+	homeboxItemId?: string;
+	attachments: Array<{ photoId: string; status: string; attachmentId?: string; error?: string }>;
+}
+
 export interface ItemUpdateData {
 	assetId?: string | null;
 	name?: string;
@@ -33,6 +40,26 @@ export const items = {
 			body: JSON.stringify(data),
 			signal: options.signal,
 		}),
+
+	submitBulkCandidate: (
+		missionId: string,
+		candidateId: string,
+		payload: Record<string, unknown>,
+		attachments: Array<{ photoId: string; file: File }>,
+		requestHash: string,
+		options: CreateOptions = {}
+	) => {
+		const form = new FormData();
+		form.append('candidate', JSON.stringify(payload));
+		form.append('request_hash', requestHash);
+		form.append('idempotency_key', `${missionId}:${candidateId}`);
+		for (const attachment of attachments) form.append('attachments', attachment.file, `${attachment.photoId}|${attachment.file.name}`);
+		return requestFormData<BulkSubmissionResponse>(`/items/bulk/${missionId}/${candidateId}`, form, {
+			signal: options.signal,
+			timeout: 180_000,
+			errorMessage: 'Bulk candidate submission failed',
+		});
+	},
 
 	/**
 	 * Update an existing item.

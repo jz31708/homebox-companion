@@ -1,0 +1,24 @@
+{
+  "repository": "jz31708/homebox-companion",
+  "main_sha": "2c2ac9d305e03bafdd2866bee9d9bb78a2172d0f",
+  "branch": "feature/final-apartment-ingestion",
+  "branch_head": "ffcbf7edc39ede0277acd22ffce4f44e56d89eaa",
+  "deployed_commit": "76a3b921d5646cd25d4f986a206eb6ee259c2190",
+  "verdict": "FAIL",
+  "blocking_findings": [
+    "B01",
+    "B02",
+    "B03",
+    "B04",
+    "B05",
+    "B06",
+    "B07",
+    "B08",
+    "B09",
+    "B10",
+    "B11",
+    "B12",
+    "B13"
+  ],
+  "physical_pilot": "BLOCKED"
+}

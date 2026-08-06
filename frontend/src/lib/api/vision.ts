@@ -16,7 +16,31 @@ import type {
 	BulkTranscriptSpan,
 	MedicineCapturedPhoto,
 	MedicineDetectResponse,
+	BulkCandidateItem,
+	BulkEvidenceRef,
 } from '../types';
+
+
+export interface TranscriptionResponse {
+	text: string;
+	start_offset_ms: number | null;
+	end_offset_ms: number | null;
+}
+
+export async function transcribeAudio(
+	audio: Blob,
+	filename = 'narration.webm',
+	options: { signal?: AbortSignal } = {}
+): Promise<TranscriptionResponse> {
+	if (audio.size === 0) throw new Error('Cannot transcribe an empty recording');
+	const form = new FormData();
+	form.append('audio', audio, filename);
+	return requestFormData<TranscriptionResponse>('/tools/audio/transcribe', form, {
+		timeout: 120_000,
+		errorMessage: 'Server transcription failed',
+		signal: options.signal,
+	});
+}
 
 export interface DetectOptions {
 	singleItem?: boolean;
@@ -51,6 +75,15 @@ export interface BulkDetectInput {
 	parentItemId: string | null;
 	editedTranscript: string;
 	transcriptSpans: BulkTranscriptSpan[];
+	photoIds?: string[];
+}
+
+export interface BulkObserveInput {
+	photos: BulkCapturedPhoto[];
+	photoIds: string[];
+	chunkId: string;
+	transcriptSpans: BulkTranscriptSpan[];
+	editedTranscript: string;
 }
 
 export interface MedicineDetectOptions {
@@ -102,7 +135,86 @@ async function buildVisionHeaders(): Promise<Record<string, string>> {
 	return headers;
 }
 
+function mapBulkFuseCandidate(candidate: any): BulkCandidateItem {
+	const blockerCodes = Array.isArray(candidate.blocker_codes) ? [...candidate.blocker_codes] : [];
+	const warningCodes = Array.isArray(candidate.warning_codes) ? [...candidate.warning_codes] : [];
+	const sourcePhotoIds = [...(candidate.evidence_photo_ids ?? candidate.source_photo_ids ?? [])];
+	const evidence: BulkEvidenceRef[] = Array.isArray(candidate.evidence)
+		? candidate.evidence.map((ref: any) => ({
+				photoId: ref.photoId ?? ref.photo_id,
+				photoIndex: ref.photoIndex ?? ref.photo_index,
+				transcriptSpanId: ref.transcriptSpanId ?? ref.transcript_span_id,
+				quote: ref.quote,
+				reason: ref.reason,
+			}))
+		: sourcePhotoIds.map((photoId: string) => ({ photoId }));
+	const duplicateMatches = (candidate.duplicate_matches ?? []).map((match: any) => ({
+		existingItemId: match.existingItemId ?? match.existing_item_id,
+		matchKind: match.matchKind ?? match.match_kind ?? 'advisory',
+		reasons: [...(match.reasons ?? [])],
+	}));
+	const duplicateResolution = candidate.duplicate_resolution
+		? {
+				action: candidate.duplicate_resolution.action,
+				existingItemId:
+					candidate.duplicate_resolution.existingItemId ??
+					candidate.duplicate_resolution.existing_item_id ??
+					null,
+				atMs: candidate.duplicate_resolution.atMs ?? candidate.duplicate_resolution.at_ms,
+			}
+		: null;
+	const confidence =
+		typeof candidate.confidence === 'number' && Number.isFinite(candidate.confidence)
+			? candidate.confidence
+			: undefined;
+	return {
+		id: candidate.id,
+		name: candidate.name,
+		quantity: candidate.quantity,
+		...(confidence === undefined ? {} : { confidence }),
+		status: candidate.state ?? 'needs_review',
+		reviewTier:
+			candidate.review_tier ??
+			(blockerCodes.length ? 'blocked' : warningCodes.length ? 'attention' : 'ready'),
+		entityMode: candidate.entity_mode ?? 'individual',
+		quantityBasis: candidate.quantity_basis ?? 'unknown',
+		evidence,
+		sourcePhotoIds,
+		sourceObservationIds: [...(candidate.source_observation_ids ?? [])],
+		evidenceTranscriptSpanIds: [
+			...(candidate.evidence_transcript_span_ids ??
+				evidence
+					.filter((ref) => ref.transcriptSpanId)
+					.map((ref) => ref.transcriptSpanId as string)),
+		],
+		uncertaintyReasons: [...warningCodes, ...blockerCodes],
+		blockerCodes,
+		warningCodes,
+		duplicateCandidateIds: [
+			...(candidate.duplicate_candidate_ids ?? candidate.duplicateCandidateIds ?? []),
+		],
+		duplicateMatches,
+		duplicateResolution,
+		duplicateExistingItemId: duplicateResolution?.existingItemId ?? null,
+		createdHomeboxItemId:
+			candidate.created_homebox_item_id ?? candidate.createdHomeboxItemId ?? null,
+		suggestedAction: candidate.suggested_action ?? 'review',
+		custom_fields: candidate.custom_fields ?? null,
+		manufacturer: candidate.manufacturer,
+		model_number: candidate.model_number,
+		serial_number: candidate.serial_number,
+		description: candidate.description,
+		tag_ids: candidate.tag_ids ?? null,
+		purchase_price: candidate.purchase_price,
+		purchase_from: candidate.purchase_from,
+		notes: candidate.notes,
+		correctionHistory: candidate.correction_history ?? [],
+		payloadSnapshot: candidate.payload_snapshot ?? null,
+	} as BulkCandidateItem;
+}
+
 export const vision = {
+	transcribeAudio,
 	/**
 	 * Detect items from a single image
 	 */
@@ -242,6 +354,7 @@ export const vision = {
 					groupLabel: photo.groupLabel,
 					ignored: photo.ignored,
 				})),
+				photoIds: input.photoIds,
 			})
 		);
 		formData.append('edited_transcript', input.editedTranscript);
@@ -261,6 +374,40 @@ export const vision = {
 			headers,
 			timeout: 180_000,
 		});
+	},
+
+	bulkObserve: async (input: BulkObserveInput, options: BulkDetectOptions = {}) => {
+		const formData = new FormData();
+		for (const photo of input.photos) formData.append('images', photo.file);
+		formData.append(
+			'session_meta',
+			JSON.stringify({ chunkId: input.chunkId, photoIds: input.photoIds })
+		);
+		formData.append('transcript_spans', JSON.stringify(input.transcriptSpans));
+		formData.append('edited_transcript', input.editedTranscript);
+		const headers = await buildVisionHeaders();
+		return requestFormData<{
+			chunkId: string;
+			photoIds: string[];
+			observations: any[];
+			warnings: string[];
+		}>('/tools/vision/bulk-observe', formData, {
+			errorMessage: 'Bulk observation failed',
+			signal: options.signal,
+			headers,
+			timeout: 180_000,
+		});
+	},
+
+	bulkFuse: async (input: { missionId: string; observations: any[]; transcript: string }) => {
+		const headers = await buildVisionHeaders();
+		const result = await request<any[]>('/tools/vision/bulk-fuse', {
+			method: 'POST',
+			body: JSON.stringify(input),
+			headers,
+			timeout: 180_000,
+		});
+		return result.map(mapBulkFuseCandidate);
 	},
 
 	medicineDetect: async (

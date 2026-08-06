@@ -7,6 +7,7 @@ export default defineConfig({
 		timeout: 8_000,
 	},
 	fullyParallel: true,
+	workers: process.env.CI ? 2 : 4,
 	reporter: [['list'], ['html', { open: 'never' }]],
 	use: {
 		baseURL: 'http://127.0.0.1:4173',
@@ -25,7 +26,7 @@ export default defineConfig({
 	webServer: {
 		command: 'npm run build && npm run preview -- --host 127.0.0.1 --port 4173',
 		url: 'http://127.0.0.1:4173',
-		reuseExistingServer: !process.env.CI,
+		reuseExistingServer: process.env.PW_REUSE_EXISTING_SERVER === '1',
 		timeout: 120_000,
 	},
 });

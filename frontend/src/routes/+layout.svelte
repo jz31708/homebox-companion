@@ -8,6 +8,7 @@
 	import HeaderNav from '$lib/components/HeaderNav.svelte';
 	import CollectionSelector from '$lib/components/CollectionSelector.svelte';
 	import AppContainer from '$lib/components/AppContainer.svelte';
+	import BulkResumeBanner from '$lib/components/BulkResumeBanner.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { collectionStore } from '$lib/stores/collection.svelte';
 	import { uiStore, showToast } from '$lib/stores/ui.svelte';
@@ -203,6 +204,7 @@
 	<!-- Main content - add bottom padding when nav is visible -->
 	<main class="flex-1">
 		<AppContainer class="px-4 py-6 {isAuthenticated ? 'pb-24 md:pb-6' : ''}">
+			{#if isAuthenticated}<BulkResumeBanner />{/if}
 			{@render children()}
 		</AppContainer>
 	</main>
