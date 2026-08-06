@@ -10,84 +10,91 @@
 	import StepIndicator from '$lib/components/StepIndicator.svelte';
 	import BackLink from '$lib/components/BackLink.svelte';
 	import AnalysisProgressBar from '$lib/components/AnalysisProgressBar.svelte';
-	import BulkCameraCapture from '$lib/components/BulkCameraCapture.svelte';
-	import { Camera, Mic, MicOff, Trash2, ImagePlus, FileText, Sparkles } from 'lucide-svelte';
+	import BulkContinuousCapture from '$lib/components/BulkContinuousCapture.svelte';
+	import type { CaptureAudioResult, CapturedFrame } from '$lib/shared/ingestionCaptureCore';
+	import { FileText, ImagePlus, Sparkles, Trash2 } from 'lucide-svelte';
 
 	const workflow = bulkSweepWorkflow;
 
 	let fileInput: HTMLInputElement;
-	let mediaRecorder: MediaRecorder | null = null;
+	let captureStudio: { finishSweep(): Promise<void> } | null = null;
 	let speechRecognition: any = null;
-	let narrationGeneration = 0;
 	let routeActive = true;
 	let isRecording = $state(false);
 	let liveSupported = $state(false);
+	let sweepIdentity: BulkMissionIdentity | null = null;
 	const removingPhotoIds = new SvelteSet<string>();
 	const retryingAudioIds = new SvelteSet<string>();
 	let audioActionErrors = $state<Record<string, string>>({});
-	let photoDrafts = $state<Record<string, { note: string; groupLabel: string; ignored: boolean }>>(
-		{}
-	);
+	let photoDrafts = $state<Record<string, { note: string; groupLabel: string; ignored: boolean }>>({});
 	let photoActionErrors = $state<Record<string, string>>({});
-	let photoRetryKinds = $state<Record<string, 'edit' | 'remove'>>({});
 	let transcriptPersistenceError = $state('');
 	let transcriptPreviewNotice = $state('');
 	let filePickerError = $state('');
 	let failedFilePickerFiles = $state<File[]>([]);
 	let retryingFilePicker = $state(false);
 	let discardingSweep = $state(false);
-	let photoRetryPatches = $state<
-		Record<string, Partial<{ note: string; groupLabel: string; ignored: boolean }>>
-	>({});
 
-	interface NarrationSession {
-		generation: number;
-		workflowIdentity: BulkMissionIdentity;
-		stream: MediaStream;
-		recorder: MediaRecorder;
-		speechRecognition: any;
-		chunks: Blob[];
-		recordingStartedAt: number;
-		recordingStoppedAt: number | null;
-		stopping: boolean;
-		invalidated: boolean;
+	function isCurrentIdentity(identity: BulkMissionIdentity | null): identity is BulkMissionIdentity {
+		if (!identity || !routeActive) return false;
+		const current = workflow.getMissionIdentity();
+		return current.missionId === identity.missionId && current.generation === identity.generation;
 	}
 
-	let narrationSession: NarrationSession | null = null;
-
-	function isCurrentNarration(session: NarrationSession): boolean {
-		return (
-			routeActive &&
-			narrationSession === session &&
-			session.generation === narrationGeneration &&
-			!session.invalidated &&
-			workflow.getMissionIdentity().missionId === session.workflowIdentity.missionId &&
-			workflow.getMissionIdentity().generation === session.workflowIdentity.generation
-		);
+	function stopSpeechPreview(): void {
+		if (!speechRecognition) return;
+		try {
+			speechRecognition.stop();
+		} catch {
+			// Recognition may already be stopped.
+		}
+		speechRecognition = null;
 	}
 
-	function stopStream(stream: MediaStream): void {
-		stream.getTracks().forEach((track) => {
-			try {
-				track.stop();
-			} catch (error) {
-				console.warn('Could not stop narration track', error);
-			}
-		});
-	}
-
-	function reportTranscriptFailure(session: NarrationSession, error: unknown): void {
-		if (!isCurrentNarration(session)) return;
-		const detail = error instanceof Error ? error.message : 'Durable transcript save failed.';
-		transcriptPersistenceError = `Transcript could not be saved. Retry or save your notes. ${detail}`;
+	function startSpeechPreview(identity: BulkMissionIdentity): void {
+		stopSpeechPreview();
+		const SpeechRecognition =
+			(window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+		if (!SpeechRecognition) return;
+		try {
+			const recognition = new SpeechRecognition();
+			recognition.continuous = true;
+			recognition.interimResults = true;
+			recognition.onresult = (event: any) => {
+				if (!isCurrentIdentity(identity)) return;
+				for (let index = event.resultIndex; index < event.results.length; index += 1) {
+					const result = event.results[index];
+					workflow.updateBrowserTranscriptPreview(
+						result[0]?.transcript ?? '',
+						Boolean(result.isFinal),
+						identity
+					);
+				}
+			};
+			recognition.onerror = () => {
+				if (speechRecognition === recognition) speechRecognition = null;
+			};
+			recognition.onend = () => {
+				if (!isRecording || !isCurrentIdentity(identity) || speechRecognition !== recognition) return;
+				setTimeout(() => {
+					try {
+						recognition.start();
+					} catch {
+						// Some browsers require a delay before restarting recognition.
+					}
+				}, 250);
+			};
+			speechRecognition = recognition;
+			recognition.start();
+		} catch {
+			speechRecognition = null;
+		}
 	}
 
 	onMount(async () => {
 		await bulkMissionDb.cleanupStaleMissions();
-		if (!workflow.state.locationId) {
-			await workflow.recover();
-		}
-		if (!workflow.state.locationId) goto(resolve('/location'));
+		if (!workflow.state.locationId) await workflow.recover();
+		if (!workflow.state.locationId) await goto(resolve('/location'));
 		const SpeechRecognition =
 			(window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 		liveSupported = Boolean(SpeechRecognition);
@@ -95,30 +102,29 @@
 
 	onDestroy(() => {
 		routeActive = false;
-		stopNarration(true);
+		stopSpeechPreview();
 		workflow.cancelActiveTranscriptions();
 	});
 
-	async function addFiles(files: FileList | File[] | null) {
+	async function addFiles(files: FileList | File[] | null): Promise<void> {
 		if (!files?.length) return;
-		const selectedFiles = Array.from(files);
+		const selected = Array.from(files);
 		try {
-			await workflow.addPhotos(selectedFiles);
+			await workflow.addPhotos(selected);
 			failedFilePickerFiles = [];
 			filePickerError = '';
 			if (fileInput) fileInput.value = '';
-		} catch (cause) {
-			failedFilePickerFiles = selectedFiles;
-			const message =
-				cause instanceof Error
-					? cause.message
-					: workflow.state.error || 'Photo could not be saved. Earlier evidence was preserved.';
-			filePickerError = `${message.replace(/[.!?]+$/, '')}. Retry the selected files.`;
+		} catch (error) {
+			failedFilePickerFiles = selected;
+			filePickerError =
+				error instanceof Error
+					? error.message
+					: 'Imported photos could not be saved. Earlier evidence was preserved.';
 		}
 	}
 
-	async function retryFailedFilePickerFiles() {
-		if (retryingFilePicker || failedFilePickerFiles.length === 0) return;
+	async function retryFailedFiles(): Promise<void> {
+		if (!failedFilePickerFiles.length || retryingFilePicker) return;
 		retryingFilePicker = true;
 		try {
 			await addFiles(failedFilePickerFiles);
@@ -127,258 +133,87 @@
 		}
 	}
 
-	async function addCapturedPhoto(event: CustomEvent<Blob>) {
-		try {
-			await workflow.addPhotos([
-				new File([event.detail], `capture-${Date.now()}.jpg`, { type: 'image/jpeg' }),
-			]);
-		} catch {
-			showToast(
-				'Photo could not be saved. Earlier photos remain safe; retry this capture.',
-				'error'
-			);
-			throw new Error('Photo could not be saved. Retry this capture.');
-		}
+	async function addCapturedPhoto(frame: CapturedFrame): Promise<void> {
+		await workflow.addCapturedFrame(frame);
 	}
 
-	async function startNarration() {
-		transcriptPreviewNotice =
-			'Browser preview is optional; server transcription will save the canonical transcript.';
-		stopNarration(true);
-		const generation = ++narrationGeneration;
-		const workflowIdentity = workflow.getMissionIdentity();
-		let stream: MediaStream | null = null;
-		try {
-			stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-			if (
-				!routeActive ||
-				generation !== narrationGeneration ||
-				workflow.getMissionIdentity().missionId !== workflowIdentity.missionId ||
-				workflow.getMissionIdentity().generation !== workflowIdentity.generation
-			) {
-				stopStream(stream);
-				return;
-			}
-			const recorder = new MediaRecorder(stream);
-			const session: NarrationSession = {
-				generation,
-				workflowIdentity,
-				stream,
-				recorder,
-				speechRecognition: null,
-				chunks: [],
-				recordingStartedAt: Date.now(),
-				recordingStoppedAt: null,
-				stopping: false,
-				invalidated: false,
-			};
-			narrationSession = session;
-			mediaRecorder = recorder;
-			recorder.ondataavailable = (event) => {
-				if (isCurrentNarration(session) && event.data.size > 0) session.chunks.push(event.data);
-			};
-			recorder.onstop = () => {
-				session.recordingStoppedAt = Date.now();
-				void finalizeNarration(session);
-			};
-			recorder.start();
-			isRecording = true;
-			startSpeechRecognition(session);
-		} catch (error) {
-			if (stream) stopStream(stream);
-			if (generation === narrationGeneration) {
-				narrationSession = null;
-				mediaRecorder = null;
-				isRecording = false;
-			}
-			showToast('Microphone unavailable. You can type notes instead.', 'warning');
-			console.warn(error);
-		}
+	async function handleStudioStart(detail: { microphoneAvailable: boolean }): Promise<void> {
+		sweepIdentity = workflow.getMissionIdentity();
+		isRecording = detail.microphoneAvailable;
+		transcriptPreviewNotice = detail.microphoneAvailable
+			? 'Narration is recording with the live camera. Browser text is preview-only; server transcription is canonical.'
+			: 'Microphone unavailable. Photos and typed notes remain available.';
+		if (detail.microphoneAvailable && liveSupported) startSpeechPreview(sweepIdentity);
 	}
 
-	function startSpeechRecognition(session: NarrationSession): void {
-		const SpeechRecognition =
-			(window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-		if (!SpeechRecognition) return;
-		try {
-			const recognition = new SpeechRecognition();
-			session.speechRecognition = recognition;
-			speechRecognition = recognition;
-			recognition.continuous = true;
-			recognition.interimResults = true;
-			recognition.onresult = (event: any) => {
-				if (!isCurrentNarration(session)) return;
-				for (let i = event.resultIndex; i < event.results.length; i++) {
-					const result = event.results[i];
-					const text = result[0]?.transcript ?? '';
-					const write = Promise.resolve().then(() =>
-						workflow.updateBrowserTranscriptPreview(
-							text,
-							Boolean(result.isFinal),
-							session.workflowIdentity
-						)
-					);
-					const handledWrite = write.then(
-						() => {},
-						(error) => reportTranscriptFailure(session, error)
-					);
-					void handledWrite;
-				}
-			};
-			recognition.onerror = () => {
-				if (!isCurrentNarration(session)) return;
-				liveSupported = false;
-				session.speechRecognition = null;
-				if (speechRecognition === recognition) speechRecognition = null;
-				try {
-					recognition.stop();
-				} catch {
-					// Recognition failure must leave MediaRecorder available for server fallback.
-				}
-			};
-			recognition.start();
-		} catch (error) {
-			liveSupported = false;
-			const failedRecognition = session.speechRecognition;
-			session.speechRecognition = null;
-			if (speechRecognition === failedRecognition) speechRecognition = null;
-			console.warn('Browser speech recognition unavailable; using server transcription', error);
-		}
+	async function handleStudioAudio(audio: CaptureAudioResult): Promise<void> {
+		const identity = sweepIdentity;
+		if (!isCurrentIdentity(identity)) return;
+		const missionStartedAt = workflow.state.startedAtMs;
+		if (missionStartedAt == null) throw new Error('Mission timing is unavailable');
+		const startedAt = Math.max(0, audio.startedAtMs - missionStartedAt);
+		const endedAt = Math.max(startedAt, audio.endedAtMs - missionStartedAt);
+		const segmentId = await workflow.addAudioSegment(
+			audio.blob,
+			audio.mimeType,
+			startedAt,
+			endedAt,
+			identity
+		);
+		if (segmentId && isCurrentIdentity(identity)) await workflow.transcribeAudioSegment(segmentId);
 	}
 
-	async function finalizeNarration(session: NarrationSession): Promise<void> {
-		try {
-			if (!isCurrentNarration(session)) return;
-			if (!isCurrentNarration(session)) return;
-			const blob = new Blob(session.chunks, {
-				type: session.recorder.mimeType || 'audio/webm',
-			});
-			if (blob.size === 0) return;
-			const missionStartedAt = workflow.state.startedAtMs;
-			if (missionStartedAt == null) throw new Error('Mission timing is unavailable');
-			const startedAt = Math.max(0, session.recordingStartedAt - missionStartedAt);
-			const endedAt = Math.max(
-				startedAt,
-				(session.recordingStoppedAt ?? Date.now()) - missionStartedAt
-			);
-			const segmentId = await workflow.addAudioSegment(
-				blob,
-				blob.type || 'audio/webm',
-				startedAt,
-				endedAt,
-				session.workflowIdentity
-			);
-			if (!isCurrentNarration(session)) return;
-			if (segmentId) await workflow.transcribeAudioSegment(segmentId);
-		} catch (error) {
-			reportTranscriptFailure(session, error);
-		} finally {
-			stopStream(session.stream);
-			if (narrationSession === session) narrationSession = null;
-			if (mediaRecorder === session.recorder) mediaRecorder = null;
-			if (speechRecognition === session.speechRecognition) speechRecognition = null;
-			if (isCurrentNarration(session)) isRecording = false;
-		}
-	}
-
-	function stopNarration(invalidate = false): void {
-		const session = narrationSession;
-		if (!session) {
-			isRecording = false;
-			return;
-		}
-		if (invalidate) {
-			narrationGeneration += 1;
-			session.invalidated = true;
-		}
-		if (session.speechRecognition) {
-			try {
-				session.speechRecognition.stop();
-			} catch {
-				// Recognition may already have failed; recorder cleanup still proceeds.
-			}
-			session.speechRecognition = null;
-		}
-		if (session.recorder.state !== 'inactive') {
-			session.stopping = true;
-			try {
-				session.recorder.stop();
-			} catch (error) {
-				reportTranscriptFailure(session, error);
-			}
-		}
-		if (invalidate) {
-			stopStream(session.stream);
-			narrationSession = null;
-			mediaRecorder = null;
-			speechRecognition = null;
-		}
+	async function handleStudioStop(): Promise<void> {
+		stopSpeechPreview();
 		isRecording = false;
+		sweepIdentity = null;
+	}
+
+	async function finishActiveSweep(): Promise<boolean> {
+		try {
+			await captureStudio?.finishSweep();
+			return true;
+		} catch (error) {
+			showToast(error instanceof Error ? error.message : 'Sweep could not finish safely.', 'error');
+			return false;
+		}
 	}
 
 	function setPhotoDraft(
 		id: string,
 		patch: Partial<{ note: string; groupLabel: string; ignored: boolean }>
-	) {
+	): void {
 		const photo = workflow.state.photos.find((entry) => entry.id === id);
 		if (!photo) return;
-		const current = photoDrafts[id] ?? {
-			note: photo.note,
-			groupLabel: photo.groupLabel,
-			ignored: photo.ignored,
+		photoDrafts = {
+			...photoDrafts,
+			[id]: {
+				note: photoDrafts[id]?.note ?? photo.note,
+				groupLabel: photoDrafts[id]?.groupLabel ?? photo.groupLabel,
+				ignored: photoDrafts[id]?.ignored ?? photo.ignored,
+				...patch,
+			},
 		};
-		photoDrafts = { ...photoDrafts, [id]: { ...current, ...patch } };
 	}
 
-	async function savePhotoPatch(
-		id: string,
-		patch: Partial<{ note: string; groupLabel: string; ignored: boolean }>
-	): Promise<void> {
-		if (!Object.keys(patch).length) return;
-		const photoBefore = workflow.state.photos.find((entry) => entry.id === id);
-		const previousValues = photoBefore
-			? {
-					note: photoBefore.note,
-					groupLabel: photoBefore.groupLabel,
-					ignored: photoBefore.ignored,
-				}
-			: null;
-		photoRetryPatches = { ...photoRetryPatches, [id]: patch };
+	async function savePhotoField(id: string, field: 'note' | 'groupLabel' | 'ignored'): Promise<void> {
+		const photo = workflow.state.photos.find((entry) => entry.id === id);
+		if (!photo) return;
+		const value = photoDrafts[id]?.[field] ?? photo[field];
 		try {
-			await workflow.updatePhoto(id, patch);
-			const nextDrafts = { ...photoDrafts };
-			delete nextDrafts[id];
-			photoDrafts = nextDrafts;
-			const nextErrors = { ...photoActionErrors };
-			delete nextErrors[id];
-			photoActionErrors = nextErrors;
-			const nextKinds = { ...photoRetryKinds };
-			delete nextKinds[id];
-			photoRetryKinds = nextKinds;
-			const nextPatches = { ...photoRetryPatches };
-			delete nextPatches[id];
-			photoRetryPatches = nextPatches;
-		} catch (cause) {
-			await workflow.recover().catch(() => false);
-			if (previousValues) photoDrafts = { ...photoDrafts, [id]: previousValues };
+			await workflow.updatePhoto(id, { [field]: value });
+			const next = { ...photoDrafts };
+			delete next[id];
+			photoDrafts = next;
+			const errors = { ...photoActionErrors };
+			delete errors[id];
+			photoActionErrors = errors;
+		} catch (error) {
 			photoActionErrors = {
 				...photoActionErrors,
-				[id]: cause instanceof Error ? cause.message : 'Photo could not be saved. Try again.',
+				[id]: error instanceof Error ? error.message : 'Photo change could not be saved.',
 			};
-			photoRetryKinds = { ...photoRetryKinds, [id]: 'edit' };
-			showToast('Photo edit failed. The previous value was kept; retry when ready.', 'error');
 		}
-	}
-
-	async function savePhotoField(
-		id: string,
-		field: 'note' | 'groupLabel' | 'ignored'
-	): Promise<void> {
-		const photo = workflow.state.photos.find((entry) => entry.id === id);
-		if (!photo) return;
-		const draft = photoDrafts[id];
-		const value = draft?.[field] ?? photo[field];
-		await savePhotoPatch(id, { [field]: value });
 	}
 
 	async function removePhoto(id: string): Promise<void> {
@@ -386,71 +221,51 @@
 		removingPhotoIds.add(id);
 		try {
 			await workflow.removePhoto(id);
-			const nextErrors = { ...photoActionErrors };
-			delete nextErrors[id];
-			photoActionErrors = nextErrors;
-			const nextKinds = { ...photoRetryKinds };
-			delete nextKinds[id];
-			photoRetryKinds = nextKinds;
-			const nextDrafts = { ...photoDrafts };
-			delete nextDrafts[id];
-			photoDrafts = nextDrafts;
-		} catch (cause) {
+			const errors = { ...photoActionErrors };
+			delete errors[id];
+			photoActionErrors = errors;
+		} catch (error) {
 			photoActionErrors = {
 				...photoActionErrors,
-				[id]: cause instanceof Error ? cause.message : 'Photo could not be removed. Try again.',
+				[id]: error instanceof Error ? error.message : 'Photo could not be removed.',
 			};
-			photoRetryKinds = { ...photoRetryKinds, [id]: 'remove' };
-			showToast('Photo removal failed. Nothing was removed; retry when ready.', 'error');
 		} finally {
 			removingPhotoIds.delete(id);
 		}
 	}
 
 	async function flushTranscriptPersistence(): Promise<boolean> {
-		const maybeWorkflow = workflow as unknown as {
-			flushTranscriptPersistence?: () => Promise<void> | void;
-		};
 		try {
-			if (typeof maybeWorkflow.flushTranscriptPersistence === 'function') {
-				await maybeWorkflow.flushTranscriptPersistence();
-			}
+			await workflow.flushTranscriptPersistence();
 			transcriptPersistenceError = '';
 			return true;
 		} catch (error) {
-			const detail =
-				workflow.state.error || (error instanceof Error ? error.message : 'Durable save failed.');
-			transcriptPersistenceError = `Transcript could not save. Retry. ${detail}`;
+			transcriptPersistenceError =
+				error instanceof Error ? error.message : 'Transcript could not be saved.';
 			return false;
 		}
 	}
 
-	async function retryPhotoAction(id: string): Promise<void> {
-		if (photoRetryKinds[id] === 'remove') {
-			await removePhoto(id);
-			return;
-		}
-		await savePhotoPatch(id, photoRetryPatches[id] ?? {});
-	}
-
 	async function reviewTranscript(): Promise<void> {
+		if (!(await finishActiveSweep())) return;
 		if (!(await flushTranscriptPersistence())) return;
-		if (workflow.state.photos.filter((photo) => !photo.ignored).length === 0) {
+		if (!workflow.state.photos.some((photo) => !photo.ignored)) {
 			showToast('Add at least one photo first', 'warning');
 			return;
 		}
 		workflow.enterTranscriptReview();
 	}
 
-	async function analyze() {
+	async function analyze(): Promise<void> {
+		if (!(await finishActiveSweep())) return;
 		if (!(await flushTranscriptPersistence())) return;
 		const result = await workflow.analyze();
-		if (result) goto(resolve('/bulk-review'));
+		if (result) await goto(resolve('/bulk-review'));
 		else if (workflow.state.error) showToast(workflow.state.error, 'error');
 	}
 
 	async function discardSweep(): Promise<void> {
-		if (discardingSweep) return;
+		if (discardingSweep || !(await finishActiveSweep())) return;
 		discardingSweep = true;
 		try {
 			await workflow.discardPersistedMission();
@@ -479,71 +294,58 @@
 	}
 </script>
 
-<svelte:head>
-	<title>Bulk Sweep - Homebox Companion</title>
-</svelte:head>
+<svelte:head><title>Bulk Sweep - Homebox Companion</title></svelte:head>
 
 <div class="animate-in pb-36">
 	<StepIndicator currentStep={2} />
 	<BackLink href="/mode" label="Back to mode choice" />
-
 	<h2 class="mb-1 text-h2 text-neutral-100">Bulk Sweep</h2>
 	<p class="mb-4 text-body-sm text-neutral-400">{workflow.state.locationPath}</p>
+
 	<label class="mb-4 block text-body-sm text-neutral-300">
 		Area label (optional)
 		<input
 			class="input mt-2 w-full"
 			value={workflow.state.areaLabel ?? ''}
 			placeholder="left desk drawer or box 3"
-			oninput={(event) => workflow.setAreaLabel((event.currentTarget as HTMLInputElement).value)}
+			oninput={(event) => workflow.setAreaLabel(event.currentTarget.value)}
 		/>
 	</label>
-	<BulkCameraCapture
-		oncapture={(blob: Blob) => addCapturedPhoto(new CustomEvent('capture', { detail: blob }))}
+
+	<BulkContinuousCapture
+		bind:this={captureStudio}
+		oncapture={addCapturedPhoto}
+		onaudio={handleStudioAudio}
+		onstart={handleStudioStart}
+		onstop={handleStudioStop}
 	/>
 
-	<div class="mb-4 grid grid-cols-2 gap-3">
-		<Button variant="primary" onclick={() => fileInput.click()}>
+	<div class="mb-4">
+		<Button variant="secondary" full onclick={() => fileInput.click()}>
 			<ImagePlus size={18} strokeWidth={1.5} />
-			<span>Add Photos</span>
+			<span>Import existing photos</span>
 		</Button>
-		{#if isRecording}
-			<Button variant="secondary" onclick={stopNarration}>
-				<MicOff size={18} strokeWidth={1.5} />
-				<span>Stop</span>
-			</Button>
-		{:else}
-			<Button variant="secondary" onclick={startNarration}>
-				<Mic size={18} strokeWidth={1.5} />
-				<span>Narrate</span>
-			</Button>
-		{/if}
 	</div>
-	{#if workflow.state.photos.length > 0}
-		<Button variant="secondary" full disabled={discardingSweep} onclick={discardSweep}>
-			<span>Discard this sweep</span>
-		</Button>
-	{/if}
 	<input
 		bind:this={fileInput}
 		class="hidden"
 		type="file"
 		accept="image/*"
-		capture="environment"
 		multiple
 		onchange={(event) => void addFiles(event.currentTarget.files)}
 	/>
 	{#if filePickerError}
-		<div
-			class="mt-3 flex items-center justify-between gap-3 rounded-lg border border-error-500/30 bg-error-500/10 p-3"
-			role="alert"
-		>
-			<p class="text-error-200 text-body-sm">{filePickerError}</p>
-			<Button
-				variant="secondary"
-				disabled={retryingFilePicker}
-				onclick={() => void retryFailedFilePickerFiles()}>Try again</Button
-			>
+		<div class="mb-4 rounded-lg border border-error-500/30 bg-error-500/10 p-3" role="alert">
+			<p class="text-body-sm text-error-200">{filePickerError}</p>
+			<Button variant="secondary" disabled={retryingFilePicker} onclick={retryFailedFiles}>Retry import</Button>
+		</div>
+	{/if}
+
+	{#if workflow.state.photos.length > 0}
+		<div class="mb-4">
+			<Button variant="secondary" full disabled={discardingSweep} onclick={discardSweep}>
+				Discard this sweep
+			</Button>
 		</div>
 	{/if}
 
@@ -554,38 +356,24 @@
 				<h3 class="font-semibold">Live Transcript</h3>
 			</div>
 			<span class="text-caption text-neutral-500">
-				{#if isRecording}
-					recording
-				{:else if liveSupported}
-					live ready
-				{:else}
-					type notes
-				{/if}
+				{isRecording ? 'recording' : liveSupported ? 'preview ready' : 'type notes'}
 			</span>
 		</div>
 		<textarea
 			class="input min-h-32"
 			placeholder="Talk while capturing, or type notes here. You can fix this before analysis."
 			value={workflow.state.editedTranscriptText}
-			oninput={(event) =>
-				void workflow.editTranscript(event.currentTarget.value).catch(() => undefined)}
+			oninput={(event) => void workflow.editTranscript(event.currentTarget.value).catch(() => undefined)}
 		></textarea>
 		{#if workflow.state.interimTranscriptText}
-			<p class="mt-2 text-body-sm italic text-neutral-400">
-				{workflow.state.interimTranscriptText}
-			</p>
+			<p class="mt-2 text-body-sm italic text-neutral-400">{workflow.state.interimTranscriptText}</p>
 		{/if}
 		{#if transcriptPreviewNotice}
-			<div class="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900" role="alert">
-				{transcriptPreviewNotice}
-			</div>
-		{:else if transcriptPersistenceError}
-			<p class="text-error-300 mt-2 text-body-sm" role="alert">
-				{transcriptPersistenceError}
-			</p>
-		{:else if workflow.state.error}
-			<p class="text-error-300 mt-2 text-body-sm" role="alert">
-				{workflow.state.error}
+			<p class="mt-2 text-body-sm text-neutral-400">{transcriptPreviewNotice}</p>
+		{/if}
+		{#if transcriptPersistenceError || workflow.state.error}
+			<p class="mt-2 text-body-sm text-error-300" role="alert">
+				{transcriptPersistenceError || workflow.state.error}
 			</p>
 		{/if}
 	</section>
@@ -594,15 +382,12 @@
 		<h3 class="mb-3 font-semibold text-neutral-100">Recordings</h3>
 		<div class="space-y-2">
 			{#each workflow.state.audioSegments as segment (segment.id)}
-				<div class="flex items-center justify-between gap-3 rounded-lg bg-neutral-800 p-3">
+				<div class="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-neutral-800 p-3">
 					<div class="min-w-0">
 						<p class="truncate text-body-sm text-neutral-200">Recording {segment.id.slice(-6)}</p>
-						<p class="text-caption text-neutral-400">
-							{segment.status} · attempt {segment.retryCount ?? 0}
-						</p>
-						{#if segment.error}<p class="text-error-300 text-caption">
-								{segment.error.message}
-							</p>{/if}
+						<p class="text-caption text-neutral-400">{segment.status} · attempt {segment.retryCount ?? 0}</p>
+						{#if segment.error}<p class="text-caption text-error-300">{segment.error.message}</p>{/if}
+						{#if audioActionErrors[segment.id]}<p class="text-caption text-error-300">{audioActionErrors[segment.id]}</p>{/if}
 					</div>
 					<p class="text-caption text-neutral-400">
 						{segment.status === 'persisted'
@@ -615,41 +400,29 @@
 										? 'Transcription failed'
 										: 'Ignored'}
 					</p>
-					{#if audioActionErrors[segment.id]}<p class="text-error-300 text-caption">
-							{audioActionErrors[segment.id]}
-						</p>{/if}
 					{#if segment.status === 'failed'}
 						<Button
 							variant="secondary"
 							disabled={retryingAudioIds.has(segment.id)}
 							ariaBusy={retryingAudioIds.has(segment.id)}
 							onclick={() => void retryTranscription(segment.id)}
-						>
-							Retry transcription
-						</Button>
+						>Retry transcription</Button>
 					{/if}
 				</div>
 			{/each}
 		</div>
 	</section>
 
-	<div class="mb-4 flex items-center justify-between">
+	<div class="mb-4 flex items-center justify-between gap-3">
 		<h3 class="font-semibold text-neutral-100">Photos ({workflow.state.photos.length})</h3>
-		<span class="text-caption text-neutral-500">Ignored photos are kept out of analysis</span>
+		<span class="text-caption text-neutral-500">Only durable photos appear here</span>
 	</div>
-
 	<div class="grid grid-cols-2 gap-3">
 		{#each workflow.state.photos as photo, index (photo.id)}
 			<div class="overflow-hidden rounded-xl border border-neutral-700 bg-neutral-900">
 				<div class="relative aspect-square bg-neutral-800">
-					<img
-						src={photo.previewUrl}
-						alt="Bulk sweep capture {index + 1}"
-						class="h-full w-full object-cover"
-					/>
-					<span
-						class="absolute left-2 top-2 rounded bg-neutral-950/80 px-2 py-1 text-caption text-neutral-200"
-					>
+					<img src={photo.previewUrl} alt="Bulk sweep capture {index + 1}" class="h-full w-full object-cover" />
+					<span class="absolute left-2 top-2 rounded bg-neutral-950/80 px-2 py-1 text-caption text-neutral-200">
 						P{String(index).padStart(3, '0')}
 					</span>
 				</div>
@@ -660,9 +433,6 @@
 						value={photoDrafts[photo.id]?.groupLabel ?? photo.groupLabel}
 						oninput={(event) => setPhotoDraft(photo.id, { groupLabel: event.currentTarget.value })}
 						onchange={() => void savePhotoField(photo.id, 'groupLabel')}
-						onkeydown={(event) => {
-							if (event.key === 'Enter') (event.currentTarget as HTMLInputElement).blur();
-						}}
 					/>
 					<input
 						class="input-sm"
@@ -670,9 +440,6 @@
 						value={photoDrafts[photo.id]?.note ?? photo.note}
 						oninput={(event) => setPhotoDraft(photo.id, { note: event.currentTarget.value })}
 						onchange={() => void savePhotoField(photo.id, 'note')}
-						onkeydown={(event) => {
-							if (event.key === 'Enter') (event.currentTarget as HTMLInputElement).blur();
-						}}
 					/>
 					<div class="flex items-center justify-between gap-2">
 						<label class="flex items-center gap-2 text-body-sm text-neutral-300">
@@ -690,22 +457,12 @@
 							class="btn-icon"
 							type="button"
 							aria-label="Remove photo"
-							aria-busy={removingPhotoIds.has(photo.id)}
 							disabled={removingPhotoIds.has(photo.id)}
 							onclick={() => void removePhoto(photo.id)}
-						>
-							<Trash2 size={16} strokeWidth={1.5} />
-						</button>
+						><Trash2 size={16} strokeWidth={1.5} /></button>
 					</div>
 					{#if photoActionErrors[photo.id]}
-						<div class="flex items-center justify-between gap-2" role="status" aria-live="polite">
-							<p class="text-caption text-warning-300">{photoActionErrors[photo.id]}</p>
-							<Button
-								variant="secondary"
-								disabled={removingPhotoIds.has(photo.id)}
-								onclick={() => void retryPhotoAction(photo.id)}>Retry</Button
-							>
-						</div>
+						<p class="text-caption text-warning-300">{photoActionErrors[photo.id]}</p>
 					{/if}
 				</div>
 			</div>
@@ -725,9 +482,7 @@
 
 <div class="fixed-bottom-panel p-4">
 	{#if workflow.state.status === 'analyzing'}
-		<Button variant="secondary" full onclick={() => workflow.cancelAnalysis()}
-			>Cancel analysis</Button
-		>
+		<Button variant="secondary" full onclick={() => workflow.cancelAnalysis()}>Cancel analysis</Button>
 	{:else if workflow.state.status === 'transcript_review'}
 		<Button variant="primary" full onclick={analyze}>
 			<Sparkles size={18} strokeWidth={1.5} />
@@ -735,7 +490,6 @@
 		</Button>
 	{:else}
 		<Button variant="primary" full onclick={reviewTranscript}>
-			<Camera size={18} strokeWidth={1.5} />
 			<span>Review Transcript</span>
 		</Button>
 	{/if}
