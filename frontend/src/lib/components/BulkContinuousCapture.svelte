@@ -238,7 +238,7 @@
 		<div class="grid grid-cols-[auto_1fr_auto] items-center gap-3 p-3">
 			<div class="flex gap-2">
 				<Button variant="secondary" onclick={toggleTorch} aria-label="Toggle torch">
-					<Zap size={18} class:text-warning-300={snapshot.torchEnabled} />
+					<Zap size={18} class={snapshot.torchEnabled ? 'text-warning-300' : ''} />
 				</Button>
 				<Button
 					variant="secondary"
