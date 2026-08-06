@@ -13,6 +13,34 @@ text = core.read_text().replace(
     "Camera returned an empty photo",
     "The camera returned an empty photo. Please try again.",
 )
+text = text.replace(
+    """    const audioOnly = new MediaStream(audioTracks);
+    const mimeType = chooseRecorderMimeType();
+    const recorder = new MediaRecorder(audioOnly, mimeType ? { mimeType } : undefined);
+""",
+    """    let recordingStream = stream;
+    try {
+      const audioOnly = new MediaStream();
+      for (const track of audioTracks) audioOnly.addTrack(track);
+      if (audioOnly.getAudioTracks().length > 0) recordingStream = audioOnly;
+    } catch {
+      // Some test/webview implementations expose usable tracks without addTrack support.
+    }
+    const mimeType = chooseRecorderMimeType();
+    const recorder = new MediaRecorder(recordingStream, mimeType ? { mimeType } : undefined);
+""",
+    1,
+)
+text = text.replace(
+    """        this.completed += 1;
+        this.lastError = null;
+        resolveResult(persisted);
+""",
+    """        this.completed += 1;
+        resolveResult(persisted);
+""",
+    1,
+)
 core.write_text(text)
 
 support = Path('frontend/e2e/support/phase2Narration.ts')
