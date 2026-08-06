@@ -1,7 +1,10 @@
 import { vision } from '$lib/api';
+import { bulkObserveV2, enrichBulkObservations } from '$lib/api/bulkObservationV2';
+import { replaceDetailedServerSpans } from '$lib/services/bulkDetailedTranscriptDb';
 import * as bulkMissionDb from '$lib/services/bulkMissionDb';
 import type { BulkAudioSegment } from '$lib/types';
 import type { BulkStructuredError } from '$lib/types/bulkDomain';
+import type { CapturedFrame } from '$lib/shared/ingestionCaptureCore';
 import { workflowLogger as log } from '$lib/utils/logger';
 import { SvelteMap } from 'svelte/reactivity';
 import {
@@ -34,6 +37,19 @@ Object.defineProperty(baseWorkflow, 'state', {
 	configurable: true,
 	get: () => narratedState,
 });
+
+const visionRuntime = vision as unknown as {
+	bulkObserve: typeof bulkObserveV2;
+	bulkFuse: (input: {
+		missionId: string;
+		observations: any[];
+		transcript: string;
+	}) => Promise<any[]>;
+};
+const originalBulkFuse = visionRuntime.bulkFuse.bind(visionRuntime);
+visionRuntime.bulkObserve = bulkObserveV2;
+visionRuntime.bulkFuse = (input) =>
+	originalBulkFuse({ ...input, observations: enrichBulkObservations(input.observations) });
 
 function currentIdentity(identity: BulkMissionIdentity): boolean {
 	const current = baseWorkflow.getMissionIdentity();
@@ -146,9 +162,7 @@ async function persistAttemptFailure(
 			currentAttemptId,
 			error
 		);
-		if (failure.committed && currentIdentity(identity)) {
-			await resynchronizeCurrentMission(identity);
-		}
+		if (failure.committed && currentIdentity(identity)) await resynchronizeCurrentMission(identity);
 	} catch {
 		log.error(`Bulk transcription persistence failed safely (${error.code})`);
 	}
@@ -188,16 +202,22 @@ async function runAudioTranscription(segmentId: string): Promise<void> {
 
 		controller = new AbortController();
 		transcriptionControllers.set(segmentId, controller);
-		const result = await vision.transcribeAudio(
+		const result = (await vision.transcribeAudio(
 			attempt.record.blob,
 			filenameForAudio(segmentId, attempt.record.mimeType),
 			{ signal: controller.signal }
-		);
+		)) as {
+			text: string;
+			start_offset_ms?: number | null;
+			end_offset_ms?: number | null;
+			segments?: Array<{
+				text: string;
+				start_offset_ms: number;
+				end_offset_ms: number;
+			}>;
+		};
 
-		if (
-			!currentIdentity(identity) ||
-			transcriptionControllers.get(segmentId) !== controller
-		) {
+		if (!currentIdentity(identity) || transcriptionControllers.get(segmentId) !== controller) {
 			await persistAttemptFailure(identity, segmentId, currentAttemptId, {
 				code: 'TRANSCRIPTION_CANCELLED',
 				message: 'Transcription was cancelled. Retry this recording.',
@@ -216,6 +236,14 @@ async function runAudioTranscription(segmentId: string): Promise<void> {
 			...serverSpanOffsets(attempt.record, result),
 		});
 		if (!committed.committed || !currentIdentity(identity)) return;
+
+		await replaceDetailedServerSpans({
+			missionId: identity.missionId,
+			audioSegmentId: segmentId,
+			audioStartMs: attempt.record.startedAtMs,
+			audioEndMs: attempt.record.endedAtMs,
+			segments: result.segments ?? [],
+		});
 		await resynchronizeCurrentMission(identity);
 	} catch (error) {
 		const structured = safeTranscriptionError(error);
@@ -233,9 +261,7 @@ baseWorkflow.transcribeAudioSegment = (segmentId: string): Promise<void> => {
 	const existing = transcriptionPromises.get(segmentId);
 	if (existing) return existing;
 	const promise = runAudioTranscription(segmentId).finally(() => {
-		if (transcriptionPromises.get(segmentId) === promise) {
-			transcriptionPromises.delete(segmentId);
-		}
+		if (transcriptionPromises.get(segmentId) === promise) transcriptionPromises.delete(segmentId);
 	});
 	transcriptionPromises.set(segmentId, promise);
 	return promise;
@@ -251,16 +277,27 @@ baseWorkflow.cancelActiveTranscriptions = (): void => {
 	for (const controller of transcriptionControllers.values()) controller.abort();
 };
 
-const mutableWorkflow = baseWorkflow as unknown as Record<
-	string,
-	(...args: unknown[]) => unknown
->;
-for (const methodName of [
-	'discardPersistedMission',
-	'continueSameArea',
-	'finishLocation',
-	'reset',
-] as const) {
+const extendedWorkflow = baseWorkflow as typeof baseWorkflow & {
+	addCapturedFrame(frame: CapturedFrame): Promise<void>;
+};
+extendedWorkflow.addCapturedFrame = async (frame: CapturedFrame): Promise<void> => {
+	const before = new Set(baseWorkflow.state.photos.map((photo) => photo.id));
+	const file = new File(
+		[frame.blob],
+		`capture-${String(frame.captureSequence).padStart(4, '0')}-${frame.takenAtMs}.jpg`,
+		{ type: frame.mimeType || 'image/jpeg' }
+	);
+	await baseWorkflow.addPhotos([file]);
+	const added = baseWorkflow.state.photos.find((photo) => !before.has(photo.id));
+	if (!added) throw new Error('Captured photo was not published after durable save');
+	await baseWorkflow.updatePhoto(added.id, {
+		takenAtMs: frame.takenAtMs,
+		sessionOffsetMs: frame.sessionOffsetMs,
+	});
+};
+
+const mutableWorkflow = baseWorkflow as unknown as Record<string, (...args: unknown[]) => unknown>;
+for (const methodName of ['discardPersistedMission', 'continueSameArea', 'finishLocation', 'reset'] as const) {
 	const original = mutableWorkflow[methodName].bind(baseWorkflow);
 	mutableWorkflow[methodName] = (...args: unknown[]) => {
 		baseWorkflow.cancelActiveTranscriptions();
@@ -268,4 +305,4 @@ for (const methodName of [
 	};
 }
 
-export const bulkSweepWorkflow = baseWorkflow;
+export const bulkSweepWorkflow = extendedWorkflow;
