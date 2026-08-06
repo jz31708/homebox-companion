@@ -1,0 +1,45 @@
+name: Apply continuous capture compatibility
+
+on:
+  push:
+    branches:
+      - fix/final-apartment-ingestion-audit
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ contains(github.event.head_commit.message, '[apply-capture-test-compat]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/final-apartment-ingestion-audit
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Apply compatibility patch
+        run: python scripts/apply_capture_test_compat.py
+      - name: Format and validate affected frontend files
+        working-directory: frontend
+        run: |
+          npm install --no-audit --no-fund
+          npx prettier --write src/lib/components/BulkContinuousCapture.svelte src/lib/shared/ingestionCaptureCore.ts e2e/support/phase2Narration.ts e2e/support/phase1Persistence.ts e2e/phase2-narration.spec.ts
+          npm run check
+          npm run lint
+          npm run build
+      - name: Commit patch and clean temporary files
+        run: |
+          rm -f scripts/apply_capture_test_compat.py .capture-test-compat-trigger .github/workflows/apply-capture-test-compat.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "test: align managed gates with continuous capture"
+          git push origin HEAD:fix/final-apartment-ingestion-audit
