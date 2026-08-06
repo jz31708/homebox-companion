@@ -1,39 +1,36 @@
 import type { BulkCapturedPhoto, BulkTranscriptSpan } from '$lib/types';
+import {
+	planTimelineChunks,
+	type PlannedTimelineChunk,
+} from '$lib/shared/ingestionCaptureCore';
 
-export interface BulkPlannedChunk {
-	id: string;
-	photoIds: string[];
-	transcriptSpanIds: string[];
-	requestHash: string;
-}
+export interface BulkPlannedChunk extends PlannedTimelineChunk {}
 
 export function planBulkObservationChunks(
 	missionId: string,
 	photos: BulkCapturedPhoto[],
 	spans: BulkTranscriptSpan[],
-	chunkSize = 8
+	primaryChunkSize = 6
 ): BulkPlannedChunk[] {
-	if (chunkSize < 6 || chunkSize > 8) throw new Error('Bulk observation chunk size must be between 6 and 8');
-	const active = photos
-		.map((photo, index) => ({ photo, index }))
-		.filter(({ photo }) => !photo.ignored)
-		.sort((a, b) => a.index - b.index);
-	const chunks: BulkPlannedChunk[] = [];
-	for (let offset = 0; offset < active.length; offset += chunkSize) {
-		const selected = active.slice(offset, offset + chunkSize);
-		const start = Math.min(...selected.map(({ photo }) => photo.sessionOffsetMs));
-		const end = Math.max(...selected.map(({ photo }) => photo.sessionOffsetMs));
-		const transcriptSpanIds = spans
-			.filter((span) => span.startMs === undefined || Math.abs((span.startMs ?? 0) - start) <= 45_000 || Math.abs((span.startMs ?? 0) - end) <= 45_000)
-			.map((span) => span.id);
-		const photoIds = selected.map(({ photo }) => photo.id);
-		const canonical = JSON.stringify({ missionId, photoIds, transcriptSpanIds });
-		chunks.push({
-			id: `${missionId}:chunk:${offset / chunkSize}`,
-			photoIds,
-			transcriptSpanIds,
-			requestHash: canonical,
-		});
-	}
-	return chunks;
+	return planTimelineChunks(
+		missionId,
+		photos.map((photo, index) => ({
+			id: photo.id,
+			index,
+			captureSequence: photo.captureSequence ?? index,
+			takenAtMs: photo.takenAtMs ?? null,
+			sessionOffsetMs: photo.sessionOffsetMs,
+			note: photo.note,
+			groupLabel: photo.groupLabel,
+			ignored: photo.ignored,
+		})),
+		spans.map((span) => ({
+			id: span.id,
+			text: span.text,
+			startMs: span.startMs ?? span.startOffsetMs ?? null,
+			endMs: span.endMs ?? span.endOffsetMs ?? null,
+			sourceAudioSegmentId: span.sourceAudioSegmentId ?? null,
+		})),
+		primaryChunkSize
+	);
 }
