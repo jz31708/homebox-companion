@@ -27,10 +27,17 @@ from server.services.transcription import (
 router = APIRouter()
 
 
+class TranscriptionSegmentResponse(BaseModel):
+    text: str
+    start_offset_ms: int
+    end_offset_ms: int
+
+
 class TranscriptionResponse(BaseModel):
     text: str
     start_offset_ms: int | None = None
     end_offset_ms: int | None = None
+    segments: list[TranscriptionSegmentResponse] = []
 
 
 _ALLOWED_MEDIA_TYPES = {
@@ -125,4 +132,12 @@ async def transcribe_audio(
         text=result.text,
         start_offset_ms=result.start_offset_ms,
         end_offset_ms=result.end_offset_ms,
+        segments=[
+            TranscriptionSegmentResponse(
+                text=segment.text,
+                start_offset_ms=segment.start_offset_ms,
+                end_offset_ms=segment.end_offset_ms,
+            )
+            for segment in result.segments
+        ],
     )
