@@ -17,12 +17,11 @@ from .medicines import router as medicines_router
 from .qr import router as qr_router
 from .tags import router as tags_router
 from .tools.audio import router as audio_router
+from .tools.bulk_observe_v2 import router as bulk_observe_v2_router
 from .tools.vision import router as vision_router
 
-# Main API router
 api_router = APIRouter(prefix="/api")
 
-# Include all sub-routers
 api_router.include_router(auth_router, tags=["auth"])
 api_router.include_router(chat_router, tags=["chat"])
 api_router.include_router(config_router, tags=["config"])
@@ -38,6 +37,7 @@ api_router.include_router(medicines_router, tags=["medicines"])
 api_router.include_router(mcp_router, tags=["mcp"])
 api_router.include_router(qr_router, tags=["qr"])
 api_router.include_router(audio_router, prefix="/tools/audio", tags=["audio"])
+api_router.include_router(bulk_observe_v2_router, prefix="/tools/vision", tags=["vision"])
 api_router.include_router(vision_router, prefix="/tools/vision", tags=["vision"])
 
 __all__ = ["api_router"]
