@@ -26,6 +26,7 @@
 
 	let video = $state<HTMLVideoElement>();
 	let session: ContinuousCaptureSession | null = null;
+	let pendingAudio = $state<CaptureAudioResult | null>(null);
 	let snapshot = $state<CaptureSessionSnapshot>({
 		active: false,
 		starting: false,
@@ -67,7 +68,7 @@
 	}
 
 	async function startSweep(): Promise<void> {
-		if (!video || snapshot.starting || snapshot.active) return;
+		if (!video || snapshot.starting || snapshot.active || pendingAudio) return;
 		captureError = '';
 		tapCount = 0;
 		failedFrames = [];
@@ -165,15 +166,18 @@
 		const current = session;
 		try {
 			await flush();
-			const audio = await current.stop();
-			if (audio) await onaudio(audio);
+			if (!pendingAudio) pendingAudio = await current.stop();
+			if (pendingAudio) {
+				await onaudio(pendingAudio);
+				pendingAudio = null;
+			}
 			await onstop();
+			session = null;
 		} catch (error) {
 			captureError = error instanceof Error ? error.message : 'Sweep could not finish safely.';
 			throw error;
 		} finally {
 			stopping = false;
-			if (!captureError && session === current) session = null;
 		}
 	}
 
@@ -198,7 +202,7 @@
 	}
 
 	beforeNavigate((navigation) => {
-		if (!snapshot.active || stopping) return;
+		if ((!snapshot.active && !pendingAudio) || stopping) return;
 		navigation.cancel();
 		captureError = 'Finishing and saving the active sweep. Navigate again when Stop completes.';
 		void finishSweep();
@@ -277,10 +281,17 @@
 		</div>
 	{:else}
 		<div class="p-4">
-			<Button variant="primary" full onclick={startSweep} disabled={snapshot.starting || stopping}>
-				<Camera size={18} />
-				{snapshot.starting ? 'Starting camera…' : 'Start camera & narrate sweep'}
-			</Button>
+			{#if pendingAudio}
+				<Button variant="primary" full onclick={() => void finishSweep()} disabled={stopping}>
+					<RotateCcw size={18} />
+					{stopping ? 'Saving narration…' : 'Retry narration save'}
+				</Button>
+			{:else}
+				<Button variant="primary" full onclick={startSweep} disabled={snapshot.starting || stopping}>
+					<Camera size={18} />
+					{snapshot.starting ? 'Starting camera…' : 'Start camera & narrate sweep'}
+				</Button>
+			{/if}
 			<p class="mt-2 text-center text-caption text-neutral-500">
 				Live rear camera and narration stay active while you take photos.
 			</p>
