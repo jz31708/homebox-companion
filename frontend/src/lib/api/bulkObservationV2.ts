@@ -1,4 +1,4 @@
-import { request, requestFormData } from './client';
+import { requestFormData } from './client';
 import { getPlannedBulkObservationChunk } from '$lib/services/bulkAnalysisPlanner';
 import type { BulkCapturedPhoto, BulkTranscriptSpan } from '$lib/types';
 
@@ -157,17 +157,6 @@ function enrichObservation(input: any): any {
 	};
 }
 
-export async function bulkFuseV2(input: {
-	missionId: string;
-	observations: any[];
-	transcript: string;
-}): Promise<any[]> {
-	return request<any[]>('/tools/vision/bulk-fuse', {
-		method: 'POST',
-		body: JSON.stringify({
-			...input,
-			observations: input.observations.map(enrichObservation),
-		}),
-		timeout: 180_000,
-	});
+export function enrichBulkObservations(observations: any[]): any[] {
+	return observations.map(enrichObservation);
 }
