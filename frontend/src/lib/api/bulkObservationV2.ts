@@ -45,20 +45,26 @@ function cacheKey(id: string): string {
 	return `hbc-bulk-observation-v2:${id}`;
 }
 
-function remember(observation: ObservationV2): void {
-	observationCache.set(observation.id, observation);
+function rememberAs(id: string, observation: ObservationV2): void {
+	const value = { ...observation, id };
+	observationCache.set(id, value);
 	try {
-		sessionStorage.setItem(cacheKey(observation.id), JSON.stringify(observation));
+		localStorage.setItem(cacheKey(id), JSON.stringify(value));
 	} catch {
 		// In-memory cache still covers the active analysis run.
 	}
+}
+
+function rememberChunkObservation(chunkId: string, observation: ObservationV2): void {
+	rememberAs(observation.id, observation);
+	rememberAs(`${chunkId}:${observation.id}`, observation);
 }
 
 function recall(id: string): ObservationV2 | null {
 	const cached = observationCache.get(id);
 	if (cached) return cached;
 	try {
-		const raw = sessionStorage.getItem(cacheKey(id));
+		const raw = localStorage.getItem(cacheKey(id));
 		if (!raw) return null;
 		const value = JSON.parse(raw) as ObservationV2;
 		observationCache.set(id, value);
@@ -123,7 +129,9 @@ export async function bulkObserveV2(
 			timeout: 180_000,
 		}
 	);
-	for (const observation of result.observations) remember(observation);
+	for (const observation of result.observations) {
+		rememberChunkObservation(result.chunkId, observation);
+	}
 	return result;
 }
 
