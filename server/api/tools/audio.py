@@ -83,7 +83,11 @@ async def read_audio_upload(audio: UploadFile, max_size_bytes: int) -> bytes:
         raise HTTPException(status_code=400, detail="Audio upload could not be read") from error
 
 
-@router.post("/transcribe", response_model=TranscriptionResponse)
+@router.post(
+    "/transcribe",
+    response_model=TranscriptionResponse,
+    response_model_exclude_defaults=True,
+)
 async def transcribe_audio(
     audio: Annotated[UploadFile, File(...)],
     _token: Annotated[str, Depends(require_valid_homebox_token)],
