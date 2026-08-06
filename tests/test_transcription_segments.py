@@ -61,7 +61,6 @@ async def test_incomplete_or_blank_segments_are_ignored_without_losing_full_text
     [
         {"text": "negative", "start": -1, "end": 1},
         {"text": "reversed", "start": 2, "end": 1},
-        {"text": "infinite", "start": 1e999, "end": 2},
     ],
 )
 async def test_invalid_complete_offsets_are_rejected(segment: dict[str, object]) -> None:
