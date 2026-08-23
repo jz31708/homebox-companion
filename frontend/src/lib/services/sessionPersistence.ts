@@ -23,7 +23,10 @@ const log = createLogger({ prefix: 'SessionPersistence' });
 // =============================================================================
 
 const DB_NAME = 'hbc-scan-recovery';
-const DB_VERSION = 1;
+// Keep this at the highest schema version used by the deployed clients.
+// Opening a lower version against an existing database throws VersionError
+// and silently disables crash recovery in that browser profile.
+const DB_VERSION = 2;
 const STORE_NAME = 'sessions';
 const SESSION_KEY = 'current';
 
@@ -59,11 +62,11 @@ function getDb(): Promise<IDBPDatabase> {
 		dbPromise = openDB(DB_NAME, DB_VERSION, {
 			upgrade(db, oldVersion) {
 				log.info(`Upgrading database from version ${oldVersion} to ${DB_VERSION}`);
-				// Clear old data on schema change
-				if (db.objectStoreNames.contains(STORE_NAME)) {
-					db.deleteObjectStore(STORE_NAME);
+				// Preserve existing recovery data when upgrading. Only create the
+				// store for a brand-new database; deleting it would lose a mission.
+				if (!db.objectStoreNames.contains(STORE_NAME)) {
+					db.createObjectStore(STORE_NAME);
 				}
-				db.createObjectStore(STORE_NAME);
 			},
 			blocked() {
 				log.warn('Database upgrade blocked by another tab');
