@@ -131,8 +131,8 @@ async def test_provider_success_normalizes_verbose_offsets() -> None:
             json={
                 "text": " hello ",
                 "segments": [
-                    {"start": 1.2, "end": 2.8},
-                    {"start": 0.5, "end": 4.25},
+                    {"text": "later", "start": 1.2, "end": 2.8},
+                    {"text": "hello", "start": 0.5, "end": 4.25},
                 ],
             },
         )
