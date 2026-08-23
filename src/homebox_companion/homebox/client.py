@@ -604,7 +604,22 @@ class HomeboxClient:
             headers=self._auth_headers(token),
             params=params or None,
         )
-        self._ensure_success(response, "Get location tree")
+        try:
+            self._ensure_success(response, "Get location tree")
+        except HomeboxAPIError as exc:
+            # Homebox 0.25 and earlier expose the same tree under the
+            # pre-entity-merge route. Keep the entity endpoint as the
+            # preferred path for 0.26+, but fall back only for a 404 so
+            # authentication and upstream failures are not masked.
+            if exc.context.get("status_code") != 404:
+                raise
+            logger.info("Homebox entity tree endpoint unavailable; using legacy location tree endpoint")
+            response = await self.client.get(
+                f"{self.base_url}/locations/tree",
+                headers=self._auth_headers(token),
+                params=params or None,
+            )
+            self._ensure_success(response, "Get legacy location tree")
         return response.json()
 
     @_rate_limited
