@@ -237,14 +237,14 @@
 	{#if snapshot.active}
 		<div class="grid grid-cols-[auto_1fr_auto] items-center gap-3 p-3">
 			<div class="flex gap-2">
-				<Button variant="secondary" onclick={toggleTorch} aria-label="Toggle torch">
+				<Button variant="secondary" onclick={toggleTorch} ariaLabel="Toggle torch">
 					<Zap size={18} class={snapshot.torchEnabled ? 'text-warning-300' : ''} />
 				</Button>
 				<Button
 					variant="secondary"
 					onclick={toggleMicrophone}
 					disabled={!snapshot.microphoneAvailable}
-					aria-label="Toggle microphone"
+					ariaLabel="Toggle microphone"
 				>
 					{#if snapshot.microphoneMuted || !snapshot.microphoneAvailable}
 						<MicOff size={18} />

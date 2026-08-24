@@ -5,7 +5,7 @@ import {
 	type PlannedTimelineChunk,
 } from '$lib/shared/ingestionCaptureCore';
 
-export interface BulkPlannedChunk extends PlannedTimelineChunk {}
+export type BulkPlannedChunk = PlannedTimelineChunk;
 
 const plannedChunks = new Map<string, BulkPlannedChunk>();
 

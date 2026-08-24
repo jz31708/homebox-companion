@@ -20,6 +20,10 @@ let lastActivityTimestamp: number = Date.now();
  */
 const VISIBILITY_REFRESH_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutes
 
+// Browsers clamp setTimeout delays above the signed 32-bit range to an
+// immediate callback. Keep long-lived tokens on a bounded re-check schedule.
+const MAX_TIMEOUT_MS = 2_147_000_000;
+
 /**
  * Maximum number of retry attempts for failed token refresh.
  */
@@ -89,7 +93,7 @@ export function scheduleRefresh(): void {
 
 	// Refresh at 50% of remaining lifetime, minimum 1 minute
 	const remaining = expires.getTime() - Date.now();
-	const delay = Math.max(remaining / 2, 60_000);
+	const delay = Math.min(Math.max(remaining / 2, 60_000), MAX_TIMEOUT_MS);
 	log.debug(
 		`[REFRESH] Scheduled next refresh in ${Math.round(delay / 1000)}s ` +
 			`(token remaining: ${Math.round(remaining / 1000 / 60)} min, ` +
@@ -97,6 +101,10 @@ export function scheduleRefresh(): void {
 	);
 
 	refreshTimer = setTimeout(async () => {
+		if (!authStore.tokenNeedsRefresh()) {
+			scheduleRefresh();
+			return;
+		}
 		log.debug('[REFRESH] Timer fired, attempting refresh');
 		const success = await refreshToken();
 		if (!success) {

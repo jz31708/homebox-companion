@@ -94,6 +94,10 @@ export async function installBulkApiMocks(page: Page): Promise<BulkApiMockTeleme
 			});
 			return;
 		}
+		if (path === '/groups') {
+			await route.fulfill({ json: [{ id: 'group-1', name: 'Default', description: '' }] });
+			return;
+		}
 		if (path === '/locations' || path === '/locations/tree') {
 			await route.fulfill({
 				json: [{ id: 'room-1', name: 'Living room', description: '', itemCount: 0, children: [] }],

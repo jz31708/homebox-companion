@@ -10,6 +10,7 @@
 		type?: 'button' | 'submit' | 'reset';
 		onclick?: () => void;
 		ariaBusy?: boolean;
+		ariaLabel?: string;
 		children: Snippet;
 	}
 
@@ -22,6 +23,7 @@
 		type = 'button',
 		onclick,
 		ariaBusy = false,
+		ariaLabel,
 		children,
 	}: Props = $props();
 
@@ -103,6 +105,7 @@
 
 <button
 	aria-busy={ariaBusy}
+	aria-label={ariaLabel}
 	{type}
 	onclick={handleClick}
 	ontouchend={handleTouchEnd}
