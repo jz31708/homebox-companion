@@ -82,6 +82,7 @@ class OpenAICompatibleTranscriptionProvider:
             raise TranscriptionProviderMalformedResponse("Transcription provider returned invalid transcript text")
 
         detailed: list[ProviderTranscriptSegment] = []
+        valid_offsets: list[tuple[int, int]] = []
         segments = payload.get("segments")
         if segments is not None:
             if not isinstance(segments, list):
@@ -94,19 +95,22 @@ class OpenAICompatibleTranscriptionProvider:
                     continue
                 if not math.isfinite(start) or not math.isfinite(end) or start < 0 or end < start:
                     raise TranscriptionProviderMalformedResponse("Transcription provider returned invalid offsets")
+                start_offset_ms = round(float(start) * 1000)
+                end_offset_ms = round(float(end) * 1000)
+                valid_offsets.append((start_offset_ms, end_offset_ms))
                 normalized_text = text.strip() if isinstance(text, str) else ""
                 if not normalized_text:
                     continue
                 detailed.append(
                     ProviderTranscriptSegment(
                         text=normalized_text,
-                        start_offset_ms=round(float(start) * 1000),
-                        end_offset_ms=round(float(end) * 1000),
+                        start_offset_ms=start_offset_ms,
+                        end_offset_ms=end_offset_ms,
                     )
                 )
 
-        starts = [segment.start_offset_ms for segment in detailed]
-        ends = [segment.end_offset_ms for segment in detailed]
+        starts = [start for start, _ in valid_offsets]
+        ends = [end for _, end in valid_offsets]
         return ProviderTranscript(
             text=payload["text"].strip(),
             start_offset_ms=min(starts) if starts else None,

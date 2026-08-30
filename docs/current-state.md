@@ -1,23 +1,23 @@
 # Current state
 
-## Medicine Cabinet V1
+## Implemented product surface
 
-The medicine cabinet work is implemented on `feature/medicine-cabinet-v1`.
-It contains transactional BDPM SQLite import from the official monthly files,
-local lookup, expiry classification, notice sanitization/PDF rendering,
-authenticated Homebox mapping and attachment endpoints, persistent mobile draft
-migration, capture/review/save-next, and a filtered medicine browser.
-Deployment and live acceptance remain release gates.
+Homebox Companion is an unofficial AI-assisted companion for Homebox inventory management. The current source implements photo-based item detection, review/edit, Homebox submission, location browse/search/QR flows, AI-assisted inventory chat with approval-gated writes, and configurable Homebox/LLM integration.
 
-Expired and unknown-expiry items remain saveable. No medical advice is
-generated; purpose text must come from the official notice or remain unknown.
+Medicine Cabinet V1 is represented in the current repository/docs: barcode/photo capture, local French BDPM reference lookup, physical expiry capture/classification, saveable expired/unknown/unmatched boxes, official-notice handling, and cabinet browsing. No medical advice should be synthesized; purpose/official facts must remain grounded in source data or unknown.
 
-## Apartment ingestion audit remediation
+## Incomplete / acceptance-gated
 
-The earlier apartment-ingestion completion claim is superseded by the
-2026-07-15 independent audit. The maintained correction branch is
-`fix/final-apartment-ingestion-audit`, based on current `origin/main` at
-`2c2ac9d`. The deployed Bulk Sweep remains an engineering preview and is not
-accepted for final apartment inventory. Follow
-`docs/plans/active/apartment-ingestion-audit-remediation.md` and its one-phase
-gates before using it for real inventory.
+Apartment/Bulk Sweep ingestion remains acceptance-sensitive. Repository implementation is not sufficient evidence that a full apartment ingestion workflow has passed live acceptance. Follow the maintained active remediation/acceptance plan when that workflow is the task, and do not promote an engineering preview to “finished” based on source presence alone.
+
+## Architecture state
+
+The application uses a FastAPI backend/reusable Python package plus a SvelteKit/Svelte 5 frontend. Workflow services own scan-flow state and pages should remain thin. LiteLLM is the LLM adapter boundary. Homebox remains the inventory system manipulated through its API.
+
+## Safety and authority
+
+- AI-proposed writes remain review/approval gated by the product workflow/tool policy.
+- Secrets/API keys and local runtime configuration remain outside Git.
+- This public repository must not contain private homelab addresses, secret-store locations, or private deployment facts.
+- Product behavior belongs here; any private homelab deployment mapping belongs in private infrastructure inventory.
+- External Homebox/provider availability must be verified rather than inferred from repository state.
